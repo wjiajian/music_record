@@ -1,0 +1,27 @@
+{
+  "name": "music-record",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "网易云个人听歌统计 —— 每日快照 + 差分，按天/周/月/年统计听歌排行",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "migrate": "node --disable-warning=ExperimentalWarning src/db/migrate.js",
+    "collect": "node --disable-warning=ExperimentalWarning src/collector/runDaily.js",
+    "collect:realtime": "node --disable-warning=ExperimentalWarning src/collector/runRealtime.js",
+    "probe": "node --disable-warning=ExperimentalWarning src/probe/runProbe.js",
+    "probe:watch": "node --disable-warning=ExperimentalWarning src/probe/runProbe.js --watch",
+    "probe:burst": "node --disable-warning=ExperimentalWarning src/probe/runProbe.js --burst=3 --gap=1500",
+    "probe:analyze": "node --disable-warning=ExperimentalWarning src/probe/analyze.js",
+    "stimulus": "node --disable-warning=ExperimentalWarning src/probe/stimulus.js",
+    "rebuild": "node --disable-warning=ExperimentalWarning src/db/rebuild.js",
+    "api": "node --disable-warning=ExperimentalWarning src/api/server.js",
+    "test": "node --disable-warning=ExperimentalWarning --test"
+  },
+  "dependencies": {
+    "fastify": "^5.2.0",
+    "luxon": "^3.5.0"
+  }
+}

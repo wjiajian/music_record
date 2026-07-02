@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>music-record</title>
+    <link rel="stylesheet" href="/styles.css">
+    <script type="module" src="/app.js"></script>
+  </head>
+  <body>
+    <div class="status-strip">
+      <div class="container status-strip__inner">
+        <span class="mono-label">MUSIC RECORD</span>
+        <span id="stripStatus">正在读取本地听歌账本</span>
+      </div>
+    </div>
+
+    <header class="topbar">
+      <div class="container topbar__inner">
+        <a class="brand" href="/" aria-label="music-record 首页">
+          <span class="brand__mark"></span>
+          <span>music-record</span>
+        </a>
+        <nav class="nav-links" aria-label="页面导航">
+          <a href="#live">实时</a>
+          <a href="#ranking">排行</a>
+          <a href="#trend">趋势</a>
+          <a href="#playlists">歌单</a>
+        </nav>
+        <button class="icon-button lift" id="refreshButton" type="button" aria-label="刷新数据" title="刷新数据">
+          <span aria-hidden="true">↻</span>
+        </button>
+      </div>
+    </header>
+
+    <main>
+      <section class="hero-shell">
+        <div class="container hero-grid">
+          <div class="hero-copy">
+            <p class="eyebrow">NETEASE LISTENING LEDGER</p>
+            <h1>听歌记录，按天结晶。</h1>
+            <p class="hero-subtitle" id="heroSubtitle">每日快照差分生成的个人听歌账本。</p>
+
+            <div class="control-row" aria-label="周期">
+              <button class="seg-button is-active" type="button" data-period="day">日</button>
+              <button class="seg-button" type="button" data-period="all">全部</button>
+              <button class="seg-button" type="button" data-period="week">周</button>
+              <button class="seg-button" type="button" data-period="month">月</button>
+              <button class="seg-button" type="button" data-period="year">年</button>
+            </div>
+          </div>
+
+          <aside class="hero-panel" aria-label="采集状态">
+            <div class="mosaic" id="mosaic" aria-label="最近七天每日播放最多歌曲"></div>
+            <div class="health-card">
+              <div>
+                <p class="mono-label">LAST SNAPSHOT</p>
+                <strong id="lastSnapshot">--</strong>
+              </div>
+              <span class="status-pill" id="healthPill">读取中</span>
+            </div>
+          </aside>
+        </div>
+      </section>
+
+      <section class="container metric-grid" aria-label="概览指标">
+        <article class="metric-card">
+          <span class="mono-label">PLAYS</span>
+          <strong id="metricPlays">--</strong>
+          <small id="metricPlaysHint">累计播放</small>
+        </article>
+        <article class="metric-card">
+          <span class="mono-label">HOURS</span>
+          <strong id="metricHours">--</strong>
+          <small>估算时长</small>
+        </article>
+        <article class="metric-card">
+          <span class="mono-label">SONGS</span>
+          <strong id="metricSongs">--</strong>
+          <small>不同歌曲</small>
+        </article>
+        <article class="metric-card">
+          <span class="mono-label">DAYS</span>
+          <strong id="metricDays">--</strong>
+          <small>有差分的天数</small>
+        </article>
+      </section>
+
+      <section class="container live-grid" id="live">
+        <article class="panel panel--compact">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">RECENT</p>
+              <h2>最近播放</h2>
+            </div>
+            <span class="source-pill">/record/recent/song</span>
+          </div>
+          <div class="compact-list" id="recentList" aria-live="polite"></div>
+        </article>
+
+        <article class="panel panel--compact">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">TODAY</p>
+              <h2>今日足迹</h2>
+            </div>
+            <span class="source-pill">/listen/data/today/song</span>
+          </div>
+          <div class="compact-list" id="todayList" aria-live="polite"></div>
+        </article>
+      </section>
+
+      <section class="container work-grid">
+        <article class="panel" id="ranking">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">RANKING</p>
+              <h2>周期排行</h2>
+            </div>
+            <div class="segmented" aria-label="排行维度">
+              <button class="seg-button is-active" type="button" data-dimension="song">歌曲</button>
+              <button class="seg-button" type="button" data-dimension="artist">歌手</button>
+              <button class="seg-button" type="button" data-dimension="album">专辑</button>
+            </div>
+          </div>
+          <div class="ranking-list" id="rankingList" aria-live="polite"></div>
+        </article>
+
+        <article class="panel" id="trend">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">TREND</p>
+              <h2>播放趋势</h2>
+            </div>
+            <div class="segmented" aria-label="趋势粒度">
+              <button class="seg-button is-active" type="button" data-granularity="day">日</button>
+              <button class="seg-button" type="button" data-granularity="week">周</button>
+              <button class="seg-button" type="button" data-granularity="month">月</button>
+            </div>
+          </div>
+          <div class="trend-chart" id="trendChart" aria-live="polite"></div>
+        </article>
+      </section>
+
+      <section class="container playlist-section" id="playlists">
+        <div class="section-head">
+          <p class="eyebrow">MY PLAYLISTS</p>
+          <h2>我的歌单信息</h2>
+        </div>
+        <div class="playlist-grid">
+          <article class="panel panel--playlist">
+            <div class="panel-head">
+              <div>
+                <p class="eyebrow">USER PLAYLIST</p>
+                <h2>歌单</h2>
+              </div>
+              <span class="source-pill">/user/playlist</span>
+            </div>
+            <div class="playlist-list" id="playlistList" aria-live="polite"></div>
+          </article>
+
+          <article class="panel panel--playlist">
+            <div class="panel-head">
+              <div>
+                <p class="eyebrow">TRACK ALL</p>
+                <h2 id="playlistTrackTitle">曲目</h2>
+              </div>
+              <span class="source-pill">/playlist/track/all</span>
+            </div>
+            <div class="track-list" id="playlistTracks" aria-live="polite"></div>
+          </article>
+        </div>
+      </section>
+
+    </main>
+  </body>
+</html>
