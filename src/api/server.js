@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { getReadonlyDb } from '../db/index.js';
 import routes from './routes.js';
 import { config } from '../config.js';
+import { startDailyCollectScheduler } from '../collector/scheduler.js';
 
 const publicDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', 'public');
 
@@ -43,7 +44,21 @@ app.get('/api', async () => ({
 
 app
   .listen({ port: config.api.port, host: config.api.host })
-  .then((addr) => app.log.info(`api 已启动：${addr}`))
+  .then((addr) => {
+    app.log.info(`api 已启动：${addr}`);
+    // 进程内每日采集调度（替代 Windows 计划任务；COLLECT_IN_API=0 可关）
+    if (config.collect.inApi) {
+      const stop = startDailyCollectScheduler({ logger: app.log });
+      const shutdown = () => {
+        stop();
+        app.close().finally(() => process.exit(0));
+      };
+      process.on('SIGINT', shutdown);
+      process.on('SIGTERM', shutdown);
+    } else {
+      app.log.info('[scheduler] COLLECT_IN_API=0，进程内采集已禁用');
+    }
+  })
   .catch((err) => {
     app.log.error(err);
     process.exit(1);

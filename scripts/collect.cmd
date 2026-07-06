@@ -1,7 +1,6 @@
 @echo off
-rem 每日采集任务包装：schtasks 不继承会话环境变量，必须在此注入。
-rem 把 YOUR_UID_HERE 改成你的网易云 uid；ATTRIBUTION 用 probe:analyze 给出的建议值。
+rem Daily collect wrapper (route B: uid / cookie / ATTRIBUTION all come from .env).
+rem config.js auto-loads .env at startup, so do NOT `set` them here --
+rem process env vars take precedence over .env and would override the real values.
 cd /d D:\Project\music_record
-set NETEASE_UID=YOUR_UID_HERE
-set ATTRIBUTION=prev
 node --disable-warning=ExperimentalWarning src\collector\runDaily.js >> data\collect.log 2>&1

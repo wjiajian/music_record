@@ -117,31 +117,39 @@ function localDateFromPlayTime(playTime) {
   return dt.isValid ? dt.toISODate() : null;
 }
 
-function recentEventCountsForDate(db, playDate) {
-  const counts = new Map();
+// 当天在「最近播放」里出现过的去重歌曲集合。
+// 数据源约束：网易云 recent 对每首歌只保留最近一次播放时刻（去重），无法反映
+// 当天循环播放次数。故 recent 只作「今天听过这首歌」的存在性标记，不承载次数。
+function recentSongsForDate(db, playDate) {
+  const songs = new Set();
   const events = db.prepare('SELECT song_id, play_time FROM recent_play_event').all();
   for (const event of events) {
     if (localDateFromPlayTime(event.play_time) !== playDate) continue;
-    counts.set(event.song_id, (counts.get(event.song_id) || 0) + 1);
+    songs.add(event.song_id);
   }
-  return [...counts.entries()].map(([songId, plays]) => ({ songId, plays }));
+  return [...songs];
 }
 
+// recent 存在性占位：每首歌记 1 次，且只补 allData 差分没有的歌（DO NOTHING 不
+// 覆盖 source='all' 的真实次数）。真实播放次数（含循环）一律以 allData 差分为准。
 export function replaceDailyPlayWithRecentEvents(db, playDate) {
-  const rows = recentEventCountsForDate(db, playDate);
-  if (!rows.length) {
+  const songIds = recentSongsForDate(db, playDate);
+  if (!songIds.length) {
     return { replaced: false, written: 0, skipped: 'no_recent_events' };
   }
 
-  db.prepare('DELETE FROM daily_play WHERE play_date=?').run(playDate);
+  db.prepare("DELETE FROM daily_play WHERE play_date=? AND source='recent'").run(playDate);
   const ins = db.prepare(
     `INSERT INTO daily_play(play_date,song_id,plays,span_days,is_estimated,source)
-     VALUES(?,?,?,?,?,?)`
+     VALUES(?,?,1,1,0,'recent')
+     ON CONFLICT(play_date,song_id) DO NOTHING`
   );
-  for (const row of rows) {
-    ins.run(playDate, row.songId, row.plays, 1, 0, 'recent');
+  let written = 0;
+  for (const songId of songIds) {
+    const r = ins.run(playDate, songId);
+    written += Number(r.changes) || 0;
   }
-  return { replaced: true, written: rows.length, skipped: null };
+  return { replaced: true, written, skipped: null };
 }
 
 export function applyRecentPlayEvents(db, dates = null) {

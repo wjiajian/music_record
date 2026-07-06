@@ -35,6 +35,16 @@ export const config = {
     host: process.env.API_HOST || '127.0.0.1',
   },
 
+  // api 进程内每日采集调度（替代 Windows 计划任务）：
+  //   inApi   = 是否在 api 进程里挂定时采集（默认开；设 COLLECT_IN_API=0 关）
+  //   at      = 每日触发的本地时刻 HH:mm（默认 04:00，凌晨抓、配合 ATTRIBUTION=prev）
+  //   onStart = api 启动时若今天还没抓过快照是否立即补抓一次（默认关，避免白天抓乱了归属日）
+  collect: {
+    inApi: process.env.COLLECT_IN_API !== '0',
+    at: process.env.COLLECT_AT || '04:00',
+    onStart: process.env.COLLECT_ON_START === '1',
+  },
+
   // 冷启动门槛：攒够多少「有差分的天数」才出对应周期，否则返回「攒取中」
   sufficiency: { day: 1, week: 7, month: 30, year: 365 },
 };

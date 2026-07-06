@@ -6,16 +6,27 @@ import { config } from '../config.js';
 
 let _db = null;
 
+// 可写连接统一 PRAGMA（DRY）：WAL 支持一写多读并发。
+function applyWritablePragmas(db) {
+  db.exec('PRAGMA journal_mode = WAL;');
+  db.exec('PRAGMA foreign_keys = ON;');
+  db.exec('PRAGMA busy_timeout = 5000;');
+  return db;
+}
+
 // 打开（或创建）可读写数据库并应用 PRAGMA。进程内复用单连接（单写者）。
 export function getDb() {
   if (_db) return _db;
   fs.mkdirSync(path.dirname(config.dbPath), { recursive: true });
-  const db = new DatabaseSync(config.dbPath);
-  db.exec('PRAGMA journal_mode = WAL;');
-  db.exec('PRAGMA foreign_keys = ON;');
-  db.exec('PRAGMA busy_timeout = 5000;');
-  _db = db;
-  return db;
+  _db = applyWritablePragmas(new DatabaseSync(config.dbPath));
+  return _db;
+}
+
+// 独立的可写连接（不进单例 _db）。供 api 进程内调度器采集用——
+// api 主连接是只读（getReadonlyDb），采集需另开可写连接，WAL 下与只读连接并发共存。
+export function openWritableConnection() {
+  fs.mkdirSync(path.dirname(config.dbPath), { recursive: true });
+  return applyWritablePragmas(new DatabaseSync(config.dbPath));
 }
 
 // 只读打开（api 进程用）。需先跑过 migrate 让库文件存在。

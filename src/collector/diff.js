@@ -9,8 +9,9 @@ export function computeDailyIncrements(db, snapDate, { attribution = 'prev' } = 
   const snap = db.prepare('SELECT id FROM snapshot WHERE snapshot_date=?').get(snapDate);
   if (!snap) throw new Error(`快照不存在: ${snapDate}`);
 
-  // 幂等：清掉归属日的旧增量（两源共用 play_date，一并清后整日重算）
-  db.prepare('DELETE FROM daily_play WHERE play_date=?').run(attributeDate);
+  // 幂等：只清掉归属日自己这一源（source='all'）的旧增量，整源重算。
+  // 不再连清 recent —— 两源分域共存，all 是真实次数、recent 只作存在性占位。
+  db.prepare("DELETE FROM daily_play WHERE play_date=? AND source='all'").run(attributeDate);
 
   const stats = {
     attributeDate,

@@ -5,6 +5,8 @@ data/
 *.db-shm
 *.log
 .env
+.claude
+.agent
 
 
 exa-electric-editorial

@@ -1,0 +1,43 @@
+# music-record 一键部署（Docker Compose）
+#
+# 部署步骤（Linux 服务器）：
+#   1. 把仓库放到服务器，在项目根建好 .env（填 NETEASE_UID / NETEASE_COOKIE，见 .env.example）
+#   2. cd 到项目根，执行：
+#        docker compose up -d --build
+#   3. 查看日志：docker compose logs -f
+#      停止：     docker compose down
+#
+# 采集靠 api 进程内调度（COLLECT_AT，默认 04:00），无需额外容器/cron。
+# nginx 反代 + HTTPS 后续再加（当前 ports 只映射到宿主 127.0.0.1，不直接对公网）。
+
+services:
+  music-record:
+    build:
+      # context 指向项目根（compose 在 deploy/ 子目录，故上一级）
+      context: ..
+      dockerfile: Dockerfile
+    image: music-record:latest
+    container_name: music-record
+    restart: unless-stopped
+
+    # 机密与配置从项目根 .env 注入（不打进镜像）。config.js 也会 loadEnvFile，
+    # 但容器内没有 .env 文件，故这里用 env_file 显式注入进程环境变量。
+    env_file:
+      - ../.env
+    environment:
+      # 容器内必须绑 0.0.0.0 才能被宿主访问（Dockerfile 已设，这里显式声明更清晰）
+      API_HOST: "0.0.0.0"
+      # 如需容器系统时区一致（日志时间戳），可解开下一行：
+      TZ: "Asia/Shanghai"
+
+    # 只映射到宿主 127.0.0.1，避免绕过防火墙直接暴露公网；对外由 nginx 反代。
+    ports:
+      - "127.0.0.1:3000:3000"
+
+    # 数据库持久化：命名 volume 挂到容器 /app/data，容器重建数据不丢。
+    volumes:
+      - music-data:/app/data
+
+volumes:
+  music-data:
+    driver: local
