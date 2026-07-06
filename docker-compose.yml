@@ -2,7 +2,7 @@
 #
 # 部署步骤（Linux 服务器）：
 #   1. 把仓库放到服务器，在项目根建好 .env（填 NETEASE_UID / NETEASE_COOKIE，见 .env.example）
-#   2. cd 到项目根，执行：
+#   2. cd 到项目根（compose 文件所在目录），执行：
 #        docker compose up -d --build
 #   3. 查看日志：docker compose logs -f
 #      停止：     docker compose down
@@ -13,8 +13,8 @@
 services:
   music-record:
     build:
-      # context 指向项目根（compose 在 deploy/ 子目录，故上一级）
-      context: ..
+      # context 指向项目根（compose 文件就在项目根，故用当前目录）
+      context: .
       dockerfile: Dockerfile
     image: music-record:latest
     container_name: music-record
@@ -23,7 +23,7 @@ services:
     # 机密与配置从项目根 .env 注入（不打进镜像）。config.js 也会 loadEnvFile，
     # 但容器内没有 .env 文件，故这里用 env_file 显式注入进程环境变量。
     env_file:
-      - ../.env
+      - .env
     environment:
       # 容器内必须绑 0.0.0.0 才能被宿主访问（Dockerfile 已设，这里显式声明更清晰）
       API_HOST: "0.0.0.0"
