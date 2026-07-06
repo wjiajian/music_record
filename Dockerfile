@@ -19,6 +19,11 @@ COPY package.json ./
 COPY src ./src
 COPY public ./public
 
+# 启动入口脚本：先幂等 migrate 建库，再启 api（详见脚本内注释）。
+# sed 去掉可能的 Windows CRLF，避免 `\r` 导致 sh 解析失败；并加执行权限。
+COPY docker-entrypoint.sh /app/docker-entrypoint.sh
+RUN sed -i 's/\r$//' /app/docker-entrypoint.sh && chmod +x /app/docker-entrypoint.sh
+
 # 数据库落在 /app/data —— 部署时用 volume 挂载持久化，否则容器重建数据全丢。
 # 预建目录并交给非 root 用户（node:slim 自带 uid/gid 1000 的 node 用户）。
 RUN mkdir -p /app/data && chown -R node:node /app/data
@@ -35,4 +40,5 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.API_PORT||3000)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
-CMD ["node", "--disable-warning=ExperimentalWarning", "src/api/server.js"]
+# 入口：先幂等建库再启 api（见 docker-entrypoint.sh）。
+CMD ["/app/docker-entrypoint.sh"]
