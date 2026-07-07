@@ -3,7 +3,12 @@ const state = {
   dimension: 'song',
   granularity: 'day',
   playlistId: null,
+  playlistOffset: 0,
+  trackOffset: 0,
 };
+
+const PLAYLIST_PAGE_SIZE = 10; // 歌单列表每页条数
+const TRACK_PAGE_SIZE = 10; // 曲目每页条数
 
 const numberFormat = new Intl.NumberFormat('zh-CN');
 const MOSAIC_DAYS = 7;
@@ -37,7 +42,9 @@ const nodes = {
   recentList: document.querySelector('#recentList'),
   todayList: document.querySelector('#todayList'),
   playlistList: document.querySelector('#playlistList'),
+  playlistPager: document.querySelector('#playlistPager'),
   playlistTracks: document.querySelector('#playlistTracks'),
+  playlistTracksPager: document.querySelector('#playlistTracksPager'),
   playlistTrackTitle: document.querySelector('#playlistTrackTitle'),
   trendChart: document.querySelector('#trendChart'),
   mosaic: document.querySelector('#mosaic'),
@@ -351,10 +358,11 @@ function renderPlaylists(payload) {
     nodes.playlistTracks.replaceChildren(emptyState('未选择歌单', '没有可读取的曲目。'));
     return null;
   }
-  if (!state.playlistId || !items.some((item) => String(item.id) === String(state.playlistId))) {
+  // 只在「尚无选择」时默认选第一个；翻页后选择应保留（选中项可能在别的页）。
+  if (!state.playlistId && items.length) {
     state.playlistId = items[0].id;
   }
-  const rows = items.slice(0, 18).map((item) => {
+  const rows = items.map((item) => {
     const row = document.createElement('button');
     row.className = 'playlist-row';
     row.type = 'button';
@@ -389,11 +397,11 @@ function renderPlaylistTracks(payload) {
     return;
   }
   nodes.playlistTrackTitle.textContent = payload.playlist?.name || '曲目';
-  const rows = (payload.items || []).slice(0, 20).map((song, index) =>
+  const rows = (payload.items || []).map((song, index) =>
     makeSongRow(
       { song },
       {
-        valueText: `#${String(index + 1).padStart(2, '0')}`,
+        valueText: `#${String(state.trackOffset + index + 1).padStart(2, '0')}`,
         metaText: songSubtitle(song),
       }
     )
@@ -438,14 +446,73 @@ function shortBucket(bucket) {
   return bucket;
 }
 
+// 通用「上一页/下一页」翻页条。total<=pageSize 时隐藏（只有一页无需翻）。
+function renderPager(container, { offset = 0, pageSize = 0, total = 0, kind = '' } = {}) {
+  if (!container) return;
+  if (!total || total <= pageSize) {
+    container.replaceChildren();
+    container.hidden = true;
+    return;
+  }
+  container.hidden = false;
+  const pageCount = Math.ceil(total / pageSize);
+  const current = Math.floor(offset / pageSize) + 1;
+
+  const prev = document.createElement('button');
+  prev.className = 'pager-btn';
+  prev.type = 'button';
+  prev.dataset.pager = kind;
+  prev.dataset.dir = 'prev';
+  prev.textContent = '‹ 上一页';
+  prev.disabled = offset <= 0;
+
+  const info = document.createElement('span');
+  info.className = 'pager-info';
+  info.textContent = `第 ${current} / ${pageCount} 页 · 共 ${formatNumber(total)}`;
+
+  const next = document.createElement('button');
+  next.className = 'pager-btn';
+  next.type = 'button';
+  next.dataset.pager = kind;
+  next.dataset.dir = 'next';
+  next.textContent = '下一页 ›';
+  next.disabled = offset + pageSize >= total;
+
+  container.replaceChildren(prev, info, next);
+}
+
+async function loadPlaylists() {
+  const payload = await getJson('/api/playlists', {
+    limit: PLAYLIST_PAGE_SIZE,
+    offset: state.playlistOffset,
+  }).catch((error) => ({ error: error.message }));
+  renderPlaylists(payload);
+  renderPager(nodes.playlistPager, {
+    offset: state.playlistOffset,
+    pageSize: PLAYLIST_PAGE_SIZE,
+    total: payload && !payload.error ? payload.total : 0,
+    kind: 'playlist',
+  });
+}
+
 async function loadPlaylistTracks() {
   if (!state.playlistId) {
     nodes.playlistTracks.replaceChildren(emptyState('未选择歌单', '先选择一个歌单。'));
+    renderPager(nodes.playlistTracksPager, { total: 0 });
     return;
   }
-  nodes.playlistTracks.replaceChildren(emptyState('读取曲目中', '正在请求 /playlist/track/all。'));
-  const tracks = await getJson('/api/netease/playlist/track/all', { id: state.playlistId, limit: 20 }).catch((error) => ({ error: error.message }));
+  nodes.playlistTracks.replaceChildren(emptyState('读取曲目中', '正在请求 /api/playlists/:id/tracks。'));
+  const tracks = await getJson(`/api/playlists/${encodeURIComponent(state.playlistId)}/tracks`, {
+    limit: TRACK_PAGE_SIZE,
+    offset: state.trackOffset,
+  }).catch((error) => ({ error: error.message }));
   renderPlaylistTracks(tracks);
+  renderPager(nodes.playlistTracksPager, {
+    offset: state.trackOffset,
+    pageSize: TRACK_PAGE_SIZE,
+    total: tracks && !tracks.error ? tracks.total : 0,
+    kind: 'track',
+  });
 }
 
 async function loadDashboard() {
@@ -457,14 +524,13 @@ async function loadDashboard() {
     const health = await getJson('/api/health');
     renderHealth(health);
 
-    const [overview, ranking, trend, dailyTops, recent, today, playlists] = await Promise.all([
+    const [overview, ranking, trend, dailyTops, recent, today] = await Promise.all([
       getJson('/api/overview').catch((error) => ({ error: error.message })),
       getJson('/api/ranking', { dimension: state.dimension, metric: 'plays', period: state.period, limit: 10 }),
       getJson('/api/trend', { granularity: state.granularity, last: state.granularity === 'day' ? 30 : 12 }),
       getJson('/api/daily-top-songs', { days: 7 }).catch((error) => ({ error: error.message })),
       getJson('/api/netease/record/recent/song', { limit: 30 }).catch((error) => ({ error: error.message })),
       getJson('/api/netease/listen/data/today/song').catch((error) => ({ error: error.message })),
-      getJson('/api/netease/user/playlist', { limit: 30 }).catch((error) => ({ error: error.message })),
     ]);
 
     renderOverview(overview, health);
@@ -472,9 +538,10 @@ async function loadDashboard() {
     renderTrend(trend, health);
     renderRecent(recent);
     renderToday(today);
-    renderPlaylists(playlists);
     renderMosaic(dailyTops);
 
+    // 歌单/曲目改读本地库，单独拉（各自带翻页），不再挤进上面的并发块
+    await loadPlaylists();
     await loadPlaylistTracks();
   } catch (error) {
     nodes.stripStatus.textContent = `读取失败：${error.message}`;
@@ -516,9 +583,23 @@ document.addEventListener('click', (event) => {
     return;
   }
 
+  const pager = event.target.closest('[data-pager]');
+  if (pager && !pager.disabled) {
+    const step = pager.dataset.dir === 'next' ? 1 : -1;
+    if (pager.dataset.pager === 'playlist') {
+      state.playlistOffset = Math.max(0, state.playlistOffset + step * PLAYLIST_PAGE_SIZE);
+      loadPlaylists();
+    } else {
+      state.trackOffset = Math.max(0, state.trackOffset + step * TRACK_PAGE_SIZE);
+      loadPlaylistTracks();
+    }
+    return;
+  }
+
   const playlist = event.target.closest('[data-playlist-id]');
   if (playlist) {
     state.playlistId = playlist.dataset.playlistId;
+    state.trackOffset = 0; // 切歌单回到曲目第 1 页
     document.querySelectorAll('[data-playlist-id]').forEach((button) => {
       button.classList.toggle('is-active', button.dataset.playlistId === state.playlistId);
     });

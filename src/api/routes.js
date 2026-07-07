@@ -5,11 +5,9 @@ import { resolvePeriod, buckets, gapDates, isoWeekday, nowLocalDate, previousDay
 import * as Q from '../aggregate/queries.js';
 import { config } from '../config.js';
 import {
-  fetchPlaylistTracks,
   fetchRecentSongs,
   fetchSongDetails,
   fetchTodayListenSongs,
-  fetchUserPlaylists,
 } from '../netease/client.js';
 
 const WEEKDAY_LABEL = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
@@ -336,25 +334,18 @@ export default async function routes(fastify) {
     }
   });
 
-  fastify.get('/api/netease/user/playlist', async (req, reply) => {
-    try {
-      return await fetchUserPlaylists(req.query.uid || config.uid, {
-        limit: req.query.limit || 30,
-        offset: req.query.offset || 0,
-      });
-    } catch (err) {
-      return neteaseError(reply, err);
-    }
+  // ---- 我的歌单（只读本地库；采集器每日落库，首屏不再打网易云）----
+  fastify.get('/api/playlists', async (req) => {
+    const limit = Math.min(Math.max(Number(req.query.limit) || 30, 1), 100);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
+    return Q.userPlaylists(db, { limit, offset });
   });
 
-  fastify.get('/api/netease/playlist/track/all', async (req, reply) => {
-    try {
-      return await fetchPlaylistTracks(req.query.id, {
-        limit: req.query.limit || 100,
-        offset: req.query.offset || 0,
-      });
-    } catch (err) {
-      return neteaseError(reply, err);
-    }
+  fastify.get('/api/playlists/:id/tracks', async (req, reply) => {
+    const id = Number(req.params.id);
+    if (!Number.isFinite(id) || id <= 0) return reply.code(400).send({ error: 'bad_playlist_id' });
+    const limit = Math.min(Math.max(Number(req.query.limit) || 20, 1), 500);
+    const offset = Math.max(Number(req.query.offset) || 0, 0);
+    return Q.playlistTracks(db, id, { limit, offset });
   });
 }

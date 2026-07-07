@@ -375,3 +375,71 @@ export function latestRecentPlaySnapshot(db) {
     return null;
   }
 }
+
+// ---- 我的歌单（只读，采集器已落库）--------------------------------
+// 返回形状对齐旧 netease 代理端点，前端渲染函数无需改动。
+
+export function userPlaylists(db, { limit = 30, offset = 0 } = {}) {
+  const total = db.prepare('SELECT COUNT(*) AS n FROM playlist').get().n;
+  const rows = db
+    .prepare(
+      `SELECT id, name, cover_img_url, track_count, play_count,
+              subscribed, privacy, update_time, creator_id, creator_name
+       FROM playlist ORDER BY list_position ASC, id ASC
+       LIMIT ? OFFSET ?`
+    )
+    .all(limit, offset);
+  return {
+    source: 'user_playlist',
+    total,
+    more: offset + rows.length < total,
+    items: rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      coverImgUrl: r.cover_img_url,
+      trackCount: r.track_count,
+      playCount: r.play_count,
+      subscribed: !!r.subscribed,
+      privacy: r.privacy,
+      updateTime: r.update_time,
+      creator: r.creator_id == null ? null : { id: r.creator_id, name: r.creator_name },
+    })),
+  };
+}
+
+export function playlistTracks(db, playlistId, { limit = 20, offset = 0 } = {}) {
+  const playlist =
+    db
+      .prepare(
+        `SELECT id, name, cover_img_url AS coverImgUrl, track_count AS trackCount, play_count AS playCount
+         FROM playlist WHERE id = ?`
+      )
+      .get(playlistId) || { id: Number(playlistId), name: '', trackCount: 0 };
+  const total = db
+    .prepare('SELECT COUNT(*) AS n FROM playlist_track WHERE playlist_id = ?')
+    .get(playlistId).n;
+  const rows = db
+    .prepare(
+      `SELECT s.id AS id, s.name AS name
+       FROM playlist_track pt JOIN song s ON s.id = pt.song_id
+       WHERE pt.playlist_id = ? ORDER BY pt.position
+       LIMIT ? OFFSET ?`
+    )
+    .all(playlistId, limit, offset);
+  // 歌手/专辑封面照抄 songDetails 范式（本文件顶部）
+  const arStmt = db.prepare(
+    `SELECT a.id, a.name FROM song_artist sa JOIN artist a ON a.id = sa.artist_id
+     WHERE sa.song_id = ? ORDER BY sa.position`
+  );
+  const alStmt = db.prepare(
+    `SELECT al.id, al.name, al.pic_url AS picUrl
+     FROM song s LEFT JOIN album al ON al.id = s.album_id WHERE s.id = ?`
+  );
+  const items = rows.map((r) => ({
+    id: r.id,
+    name: r.name,
+    artists: arStmt.all(r.id),
+    album: alStmt.get(r.id) || null,
+  }));
+  return { source: 'playlist_track_all', playlist, offset, limit, total, items };
+}

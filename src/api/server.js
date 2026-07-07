@@ -37,8 +37,8 @@ app.get('/api', async () => ({
     '/api/netease/record/recent/song',
     '/api/netease/listen/data/today/song',
     '/api/netease/song/detail',
-    '/api/netease/user/playlist',
-    '/api/netease/playlist/track/all',
+    '/api/playlists',
+    '/api/playlists/:id/tracks',
   ],
 }));
 

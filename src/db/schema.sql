@@ -138,3 +138,28 @@ CREATE TABLE IF NOT EXISTS probe (
 );
 CREATE INDEX IF NOT EXISTS idx_probe_song ON probe(song_id, fetched_at);
 CREATE TABLE IF NOT EXISTS meta ( key TEXT PRIMARY KEY, value TEXT );
+
+-- ⑤ 我的歌单（当前状态镜像；每次采集全量替换，非累计/非审计源）----------
+CREATE TABLE IF NOT EXISTS playlist (
+  id            INTEGER PRIMARY KEY,             -- netease 歌单 id（独立于 song.id 命名空间）
+  name          TEXT,
+  cover_img_url TEXT,
+  track_count   INTEGER NOT NULL DEFAULT 0,      -- 网易云声明的曲目数（未必等于已落库曲目数）
+  play_count    INTEGER NOT NULL DEFAULT 0,
+  subscribed    INTEGER NOT NULL DEFAULT 0,      -- 0=自建 1=收藏
+  privacy       INTEGER NOT NULL DEFAULT 0,
+  update_time   INTEGER,                          -- netease updateTime（epoch ms）
+  creator_id    INTEGER,
+  creator_name  TEXT,
+  list_position INTEGER NOT NULL DEFAULT 0,      -- 「我的歌单」原始次序，供稳定 ORDER BY
+  collected_at  TEXT                              -- ISO8601 UTC，本次落库时刻
+);
+
+CREATE TABLE IF NOT EXISTS playlist_track (
+  playlist_id INTEGER NOT NULL REFERENCES playlist(id) ON DELETE CASCADE,
+  song_id     INTEGER NOT NULL REFERENCES song(id),
+  position    INTEGER NOT NULL,                   -- 曲目在歌单内次序（0-based，按 trackIds 顺序）
+  PRIMARY KEY (playlist_id, position)             -- 用 position 做主键：容忍同歌单重复出现的歌
+);
+CREATE INDEX IF NOT EXISTS idx_playlist_track_song ON playlist_track(song_id);
+CREATE INDEX IF NOT EXISTS idx_playlist_track_pl   ON playlist_track(playlist_id, position);

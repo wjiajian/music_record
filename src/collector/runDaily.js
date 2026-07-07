@@ -5,6 +5,7 @@ import { pathToFileURL } from 'node:url';
 import { getDb, initSchema } from '../db/index.js';
 import { fetchSnapshot } from './fetchSnapshot.js';
 import { collectRealtimePlayback } from './realtime.js';
+import { collectPlaylists } from './playlists.js';
 import { requireUid, config } from '../config.js';
 
 // 执行一次完整采集。db 由调用方提供（脚本用单例可写连接，调度器用独立可写连接）。
@@ -15,21 +16,34 @@ export async function runCollectOnce(db, { uid = config.uid, attribution = confi
   try {
     const r = await fetchSnapshot(db, { uid, attribution });
     const realtime = await collectRealtimePlayback(db, {});
-    logStmt.run(runAt, 'collect', realtime.status === 'fail' ? 'partial' : 'ok', JSON.stringify({ diff: r.diff, realtime }));
+    // 歌单采集失败绝不拖垮整轮：try/catch 隔离，异常不冒泡（遵循「失败只记日志」）
+    let playlists;
+    try {
+      playlists = await collectPlaylists(db, { uid });
+    } catch (e) {
+      playlists = { status: 'fail', message: String(e?.message || e) };
+    }
+    // status 归并：任何子链路非 ok → 整体 partial（仅 fetchSnapshot 硬抛才 fail）
+    const partial = realtime.status === 'fail' || playlists.status !== 'ok';
+    logStmt.run(runAt, 'collect', partial ? 'partial' : 'ok', JSON.stringify({ diff: r.diff, realtime, playlists }));
     const today = realtime.today?.status === 'ok'
       ? `；今日足迹 ${realtime.today.itemCount} 首`
       : `；今日足迹失败 ${realtime.today?.message || 'unknown'}`;
     const recent = realtime.recent?.status === 'ok'
       ? `；最近播放 ${realtime.recent.itemCount} 条 → daily_play ${realtime.recent.daily.written} 行`
       : `；最近播放失败 ${realtime.recent?.message || 'unknown'}`;
+    const pl = playlists.status === 'ok'
+      ? `；歌单 ${playlists.playlistCount} 个 / 曲目 ${playlists.trackRows} 行`
+      : `；歌单采集${playlists.status === 'partial' ? '不完整' : '失败'}（${playlists.message || (playlists.failedPlaylists?.length ?? 0) + ' 单失败'}）`;
     const summary =
       `[collect] ${r.snapDate} ok：allData ${r.itemCount} 首 / weekData ${r.weekCount} 首；` +
       `增量 all ${r.diff.written} 行 + week ${r.diff.weekWritten} 行` +
       `（估算 ${r.diff.estimated + r.diff.weekEstimated}，两榜重叠 ${r.diff.coListed}，归属日 ${r.diff.attributeDate}` +
       `${r.diff.baseline ? '，首张基线' : ''}）` +
       today +
-      recent;
-    return { status: realtime.status === 'fail' ? 'partial' : 'ok', summary, snapshot: r, realtime };
+      recent +
+      pl;
+    return { status: partial ? 'partial' : 'ok', summary, snapshot: r, realtime, playlists };
   } catch (e) {
     logStmt.run(runAt, 'collect', 'fail', String(e?.message || e));
     throw e;

@@ -154,9 +154,10 @@
                 <p class="eyebrow">USER PLAYLIST</p>
                 <h2>歌单</h2>
               </div>
-              <span class="source-pill">/user/playlist</span>
+              <span class="source-pill">/api/playlists</span>
             </div>
             <div class="playlist-list" id="playlistList" aria-live="polite"></div>
+            <div class="pager" id="playlistPager" hidden></div>
           </article>
 
           <article class="panel panel--playlist">
@@ -165,9 +166,10 @@
                 <p class="eyebrow">TRACK ALL</p>
                 <h2 id="playlistTrackTitle">曲目</h2>
               </div>
-              <span class="source-pill">/playlist/track/all</span>
+              <span class="source-pill">/api/playlists/:id/tracks</span>
             </div>
             <div class="track-list" id="playlistTracks" aria-live="polite"></div>
+            <div class="pager" id="playlistTracksPager" hidden></div>
           </article>
         </div>
       </section>

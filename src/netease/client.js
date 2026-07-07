@@ -303,42 +303,72 @@ export async function fetchSongDetails(ids) {
   return { source: 'song_detail', total: songs.length, items: songs, rawCode: json.code ?? null };
 }
 
-export async function fetchUserPlaylists(uid = config.uid, { limit = 30, offset = 0 } = {}) {
-  const json = await requestWeapi('/api/user/playlist', {
-    uid: String(uid),
-    limit: Math.min(Number(limit) || 30, 100),
-    offset: Math.max(Number(offset) || 0, 0),
-    includeVideo: true,
-  });
-  const items = firstArray(json.playlist, json.data?.playlist).map(normalizePlaylist);
-  return {
-    source: 'user_playlist',
-    total: json.more ? null : items.length,
-    more: Boolean(json.more),
-    items,
-    rawCode: json.code ?? null,
-  };
+// 带退避重试地抓取用户歌单列表（仿 fetchUserRecord）。采集器每日一次调用，
+// 容得起慢重试；歌单一被限流就 502/空，故套上与 allData 同款退避。
+export async function fetchUserPlaylists(
+  uid = config.uid,
+  { limit = 30, offset = 0, retries = [30000, 120000, 600000] } = {}
+) {
+  let lastErr;
+  for (let attempt = 0; attempt <= retries.length; attempt++) {
+    try {
+      const json = await requestWeapi('/api/user/playlist', {
+        uid: String(uid),
+        limit: Math.min(Number(limit) || 30, 100),
+        offset: Math.max(Number(offset) || 0, 0),
+        includeVideo: true,
+      });
+      const items = firstArray(json.playlist, json.data?.playlist).map(normalizePlaylist);
+      return {
+        source: 'user_playlist',
+        total: json.more ? null : items.length,
+        more: Boolean(json.more),
+        items,
+        rawCode: json.code ?? null,
+      };
+    } catch (e) {
+      lastErr = e;
+      if (attempt < retries.length) await sleep(retries[attempt]);
+    }
+  }
+  throw lastErr;
 }
 
-export async function fetchPlaylistTracks(id, { limit = 100, offset = 0, s = 8 } = {}) {
+// 带退避重试地抓取某歌单某页曲目。附加返回本页有序 trackIds（脊柱）：采集器据此
+// 赋 position、左连 song detail 结果，既得权威顺序，又能优雅跳过 detail 缺歌/失效歌。
+export async function fetchPlaylistTracks(
+  id,
+  { limit = 100, offset = 0, s = 8, retries = [30000, 120000, 600000] } = {}
+) {
   if (!id) throw new Error('缺少歌单 id');
-  const detail = await requestWeapi('/api/v6/playlist/detail', {
-    id: String(id),
-    n: 100000,
-    s,
-  });
-  const playlist = detail.playlist ? normalizePlaylist(detail.playlist) : { id: Number(id), name: '', trackCount: 0 };
-  const trackIds = firstArray(detail.playlist?.trackIds).map((item) => item.id).filter((songId) => songId != null);
-  const start = Math.max(Number(offset) || 0, 0);
-  const count = Math.min(Number(limit) || 100, 500);
-  const ids = trackIds.slice(start, start + count);
-  const songs = ids.length ? (await fetchSongDetails(ids.join(','))).items : [];
-  return {
-    source: 'playlist_track_all',
-    playlist,
-    offset: start,
-    limit: count,
-    total: trackIds.length,
-    items: songs,
-  };
+  let lastErr;
+  for (let attempt = 0; attempt <= retries.length; attempt++) {
+    try {
+      const detail = await requestWeapi('/api/v6/playlist/detail', {
+        id: String(id),
+        n: 100000,
+        s,
+      });
+      if (!detail.playlist) throw new Error(`歌单详情为空（id=${id}）`);
+      const playlist = normalizePlaylist(detail.playlist);
+      const allTrackIds = firstArray(detail.playlist?.trackIds).map((item) => item.id).filter((songId) => songId != null);
+      const start = Math.max(Number(offset) || 0, 0);
+      const count = Math.min(Number(limit) || 100, 500);
+      const ids = allTrackIds.slice(start, start + count);
+      const songs = ids.length ? (await fetchSongDetails(ids.join(','))).items : [];
+      return {
+        source: 'playlist_track_all',
+        playlist,
+        offset: start,
+        limit: count,
+        total: allTrackIds.length,
+        trackIds: ids,
+        items: songs,
+      };
+    } catch (e) {
+      lastErr = e;
+      if (attempt < retries.length) await sleep(retries[attempt]);
+    }
+  }
+  throw lastErr;
 }
