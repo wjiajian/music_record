@@ -28,7 +28,6 @@ const PERIOD_BY_GRANULARITY = { day: 'day', week: 'week', month: 'month' };
 const GRANULARITY_BY_PERIOD = { day: 'day', week: 'week', month: 'month' };
 
 const nodes = {
-  stripStatus: document.querySelector('#stripStatus'),
   heroSubtitle: document.querySelector('#heroSubtitle'),
   lastSnapshot: document.querySelector('#lastSnapshot'),
   healthPill: document.querySelector('#healthPill'),
@@ -193,7 +192,6 @@ function renderMosaic(payload = {}) {
 function renderHealth(health) {
   nodes.lastSnapshot.textContent = health.last_snapshot || '--';
   nodes.healthPill.textContent = health.can_day ? '可读日榜' : '攒取中';
-  nodes.stripStatus.textContent = `快照 ${formatNumber(health.snapshot_count)} 张 · 差分 ${formatNumber(health.have_days)} 天 · ${health.last_fetch_status || 'unknown'}`;
   nodes.heroSubtitle.textContent = health.last_snapshot
     ? `最新快照 ${health.last_snapshot}，当前差分天数 ${health.have_days}。`
     : '还没有可用快照。';
@@ -544,7 +542,6 @@ async function loadDashboard() {
     await loadPlaylists();
     await loadPlaylistTracks();
   } catch (error) {
-    nodes.stripStatus.textContent = `读取失败：${error.message}`;
     nodes.healthPill.textContent = '连接失败';
     nodes.rankingList.replaceChildren(emptyState('API 不可用', error.message));
     nodes.trendChart.replaceChildren(emptyState('API 不可用', error.message));
