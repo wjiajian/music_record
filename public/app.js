@@ -1,11 +1,15 @@
 const state = {
   period: 'day',
+  rankingPeriod: 'day',
   dimension: 'song',
   granularity: 'day',
   playlistId: null,
   playlistOffset: 0,
   trackOffset: 0,
 };
+
+let latestHealth = { have_days: 0 };
+let overviewRequestId = 0;
 
 const PLAYLIST_PAGE_SIZE = 10; // 歌单列表每页条数
 const TRACK_PAGE_SIZE = 10; // 曲目每页条数
@@ -187,12 +191,12 @@ function renderHealth(health) {
 }
 
 function renderOverview(overview, health) {
-  if (!overview || overview.insufficientData) {
+  if (!overview || overview.error || overview.insufficientData) {
     nodes.metricPlays.textContent = '--';
     nodes.metricHours.textContent = '--';
     nodes.metricSongs.textContent = '--';
     nodes.metricDays.textContent = formatNumber(health.have_days);
-    nodes.metricPlaysHint.textContent = getInsufficientText(overview, health.have_days);
+    nodes.metricPlaysHint.textContent = overview?.error || getInsufficientText(overview, health.have_days);
     return;
   }
 
@@ -204,6 +208,18 @@ function renderOverview(overview, health) {
   nodes.metricPlaysHint.textContent = lowerBound
     ? `${overview.range.start} 至 ${overview.range.end} · 历史数据不完整`
     : `${overview.range.start} 至 ${overview.range.end}`;
+}
+
+// 顶部周期按钮只刷新四张概览卡片，不触碰封面墙及页面其他区域。
+async function loadPeriodOverview() {
+  setActiveButtons();
+  const requestId = ++overviewRequestId;
+  const overview = await getJson('/api/overview', { period: state.period }).catch((error) => ({
+    error: error.message,
+  }));
+  // 快速连点时丢弃已过期响应，避免旧周期覆盖新周期。
+  if (requestId !== overviewRequestId) return;
+  renderOverview(overview, latestHealth);
 }
 
 function renderRanking(payload, health) {
@@ -513,11 +529,12 @@ async function loadDashboard() {
 
   try {
     const health = await getJson('/api/health');
+    latestHealth = health;
     renderHealth(health);
 
     const [overview, ranking, trend, dailyTops, recent, today] = await Promise.all([
       getJson('/api/overview', { period: state.period }).catch((error) => ({ error: error.message })),
-      getJson('/api/ranking', { dimension: state.dimension, metric: 'plays', period: state.period, limit: 10 }),
+      getJson('/api/ranking', { dimension: state.dimension, metric: 'plays', period: state.rankingPeriod, limit: 10 }),
       getJson('/api/trend', { granularity: state.granularity, last: state.granularity === 'day' ? 30 : 12 }),
       getJson('/api/daily-top-songs', { days: 7 }).catch((error) => ({ error: error.message })),
       getJson('/api/netease/record/recent/song', { limit: 30 }).catch((error) => ({ error: error.message })),
@@ -551,7 +568,7 @@ document.addEventListener('click', (event) => {
   const period = event.target.closest('[data-period]');
   if (period) {
     state.period = period.dataset.period;
-    loadDashboard();
+    loadPeriodOverview();
     return;
   }
 
