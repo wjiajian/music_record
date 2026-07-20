@@ -119,12 +119,22 @@ CREATE INDEX IF NOT EXISTS idx_recentplay_item_time ON recent_play_item(play_tim
 CREATE TABLE IF NOT EXISTS recent_play_event (
   song_id       INTEGER NOT NULL REFERENCES song(id),
   play_time     INTEGER NOT NULL,
+  play_date     TEXT,                            -- 按 TZ_NAME 换算的本地归属日
   source_type   TEXT    NOT NULL DEFAULT '',
   first_seen_at TEXT    NOT NULL,
   last_seen_at  TEXT    NOT NULL,
   PRIMARY KEY (song_id, play_time, source_type)
 );
 CREATE INDEX IF NOT EXISTS idx_recentplay_event_time ON recent_play_event(play_time);
+
+-- 高频计数器采集缺口。失败后开启一段 gap，下次成功时闭合；覆盖 gap 的统计均为下界。
+CREATE TABLE IF NOT EXISTS counter_poll_gap (
+  id         INTEGER PRIMARY KEY AUTOINCREMENT,
+  started_at TEXT NOT NULL,
+  ended_at   TEXT,
+  reason     TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_counter_gap_started ON counter_poll_gap(started_at);
 
 -- 运维 / 探针 --------------------------------------------------------
 CREATE TABLE IF NOT EXISTS collection_log (

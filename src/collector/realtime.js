@@ -1,9 +1,14 @@
 // 实时接口采集：最近播放事件写入 daily_play，今日足迹作为辅助原始列表留存。
 import { nowLocalDate } from '../aggregate/periods.js';
+import { config } from '../config.js';
 import { tx } from '../db/index.js';
 import { fetchRecentSongs, fetchTodayListenSongs } from '../netease/client.js';
 import {
-  replaceDailyPlayWithRecentEvents,
+  applyRecentPlayEvents,
+  markCounterPollFailure,
+  markCounterPollSuccess,
+  recentPlayDates,
+  saveRecentPlayEvents,
   saveRecentPlaySnapshot,
   saveTodayListenSnapshot,
   upsertDimensions,
@@ -42,17 +47,32 @@ export async function collectTodayListen(
 
 export async function collectRecentPlay(
   db,
-  { seenDate = nowLocalDate(), limit = 100, fetcher = fetchRecentSongs } = {}
+  {
+    seenDate = nowLocalDate(),
+    limit = 300,
+    fetcher = fetchRecentSongs,
+    saveSnapshot = true,
+    markCounter = true,
+    intervalMs = config.realtime.intervalMs,
+  } = {}
 ) {
   const payload = await fetcher({ limit, includeRaw: true });
   const fetchedAt = new Date().toISOString();
   const items = payload.items || [];
   return tx(db, () => {
     upsertDimensions(db, seenDate, items);
-    const snapshotId = saveRecentPlaySnapshot(db, fetchedAt, items, rawString(payload), {
-      rawCode: payload.rawCode ?? null,
-    });
-    const daily = replaceDailyPlayWithRecentEvents(db, seenDate);
+    let snapshotId = null;
+    let eventResult;
+    if (saveSnapshot) {
+      snapshotId = saveRecentPlaySnapshot(db, fetchedAt, items, rawString(payload), {
+        rawCode: payload.rawCode ?? null,
+      });
+      eventResult = { dates: recentPlayDates(items) };
+    } else {
+      eventResult = saveRecentPlayEvents(db, fetchedAt, items);
+    }
+    const daily = applyRecentPlayEvents(db, eventResult.dates);
+    if (markCounter) markCounterPollSuccess(db, fetchedAt, intervalMs);
     return {
       status: 'ok',
       source: payload.source,
@@ -66,7 +86,7 @@ export async function collectRecentPlay(
 
 export async function collectRealtimePlayback(
   db,
-  { collectToday = true, collectRecent = true, listenDate = nowLocalDate(), recentLimit = 100 } = {}
+  { collectToday = true, collectRecent = true, listenDate = nowLocalDate(), recentLimit = 300 } = {}
 ) {
   const result = {};
   if (collectToday) {
@@ -80,6 +100,7 @@ export async function collectRealtimePlayback(
     try {
       result.recent = await collectRecentPlay(db, { seenDate: listenDate, limit: recentLimit });
     } catch (error) {
+      markCounterPollFailure(db, new Date().toISOString(), error);
       result.recent = failResult(error);
     }
   }

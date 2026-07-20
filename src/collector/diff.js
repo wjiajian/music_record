@@ -1,5 +1,5 @@
 // allData 累计差分：相邻可见快照同歌 playCount 差值写入 daily_play。
-// 当前在听的当日数据由 record/recent/song 事件定期覆盖 source='recent'。
+// 当前在听的当日数据由 record/recent/song 高频事件计数补齐。
 // weekData 只保留原始快照，不再递推日播放，避免把滚动窗口硬拆成单日。
 import { previousDay, dayDiff } from '../aggregate/periods.js';
 
@@ -9,8 +9,7 @@ export function computeDailyIncrements(db, snapDate, { attribution = 'prev' } = 
   const snap = db.prepare('SELECT id FROM snapshot WHERE snapshot_date=?').get(snapDate);
   if (!snap) throw new Error(`快照不存在: ${snapDate}`);
 
-  // 幂等：只清掉归属日自己这一源（source='all'）的旧增量，整源重算。
-  // 不再连清 recent —— 两源分域共存，all 是真实次数、recent 只作存在性占位。
+  // 幂等：只清掉当前由 allData 占优的旧增量。recent 占优的行保留，随后与新差分取大值。
   db.prepare("DELETE FROM daily_play WHERE play_date=? AND source='all'").run(attributeDate);
 
   const stats = {
@@ -40,8 +39,11 @@ export function computeDailyIncrements(db, snapDate, { attribution = 'prev' } = 
     `INSERT INTO daily_play(play_date,song_id,plays,span_days,is_estimated,source)
      VALUES(?,?,?,?,?,?)
      ON CONFLICT(play_date,song_id) DO UPDATE SET
-       plays=excluded.plays, span_days=excluded.span_days,
-       is_estimated=excluded.is_estimated, source=excluded.source`
+       plays=excluded.plays,
+       span_days=excluded.span_days,
+       is_estimated=excluded.is_estimated,
+       source=excluded.source
+     WHERE excluded.plays >= daily_play.plays`
   );
 
   // ---------- allData 累计差分（source='all'）----------

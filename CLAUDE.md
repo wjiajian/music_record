@@ -52,21 +52,21 @@ node --disable-warning=ExperimentalWarning --test --test-name-pattern="幂等" t
 
 ### daily_play 的双数据源规则（最容易踩坑处）
 
-`daily_play.source` 有两个真实来源，**分域共存、优先级固定**：
+`daily_play.source` 有两个真实来源，冲突时按次数取较大值：
 
 | source | 含义 | 语义 |
 | --- | --- | --- |
-| `'all'` | allData 累计差分 | **真实播放次数**（含循环），权威 |
-| `'recent'` | 最近播放事件 | **仅「今天听过这首歌」的存在性占位，plays 恒为 1** |
+| `'all'` | allData 累计差分 | 排行前 100 首可见的累计增量 |
+| `'recent'` | 高频最近播放事件 | 按唯一 `playTime` 捕获的播放次数 |
 
 关键约束（见 `persist.js:replaceDailyPlayWithRecentEvents`）：
-- 网易云 recent 接口对每首歌**只保留最近一次播放时刻**（去重），**无法反映当天循环次数** —— 所以 recent 只能标存在、不能计次数。
-- recent 写入用 `ON CONFLICT DO NOTHING`：**只补 allData 差分没覆盖到的歌，绝不覆盖 `source='all'` 的真实次数**。
-- 差分幂等重算时，只 `DELETE ... WHERE source='all'`，**不碰 recent 行**。两源各自独立重放。
+- recent 接口每首歌只暴露最后一次 `playTime`，因此默认每 60 秒轮询；新时间戳计为新事件，相同时间戳幂等去重。
+- daily_play 对同一首歌同一天取 `recent 事件数` 与 `allData 差分` 的较大值，只补高、不调低。
+- 轮询间隔内连续重复播放仍可能漏计；历史与 `counter_poll_gap` 覆盖区间必须标为下界。
 
 ### weekData 只留原始、不再递推
 
-`snapshot_week_item` 只做原始快照留存，**不再拆进 daily_play**（历史上试过，会把滚动窗口硬拆成单日造假）。但 `/api/ranking` 的 `period=day` 会即时从相邻两张 week 快照算 delta（`rankingSongsFromWeekSnapshotDelta`）。`diff.js` 里对 weekData 的统计（`weekIgnored`/`coListed`）纯粹是监控用。
+`snapshot_week_item` 只做原始快照留存，**不再拆进 daily_play**（历史上试过，会把滚动窗口硬拆成单日造假）。排行统一查询 `daily_play`；`diff.js` 里对 weekData 的统计（`weekIgnored`/`coListed`）纯粹是监控用。
 
 ## 差分引擎（`src/collector/diff.js`）核心规则
 
@@ -81,14 +81,14 @@ node --disable-warning=ExperimentalWarning --test --test-name-pattern="幂等" t
 ## 进程架构：只读 API + 进程内采集调度
 
 - **API 进程（`src/api/server.js`）是只读的**（`getReadonlyDb()`），无鉴权。
-- 采集**不靠 cron / Windows 计划任务**，而是 API 进程内起一个递归 `setTimeout` 调度器（`src/collector/scheduler.js`），每天到 `COLLECT_AT`（默认 04:00）跑一次 `runCollectOnce`。
+- 采集**不靠 cron / Windows 计划任务**。同一调度器每天到 `COLLECT_AT` 跑完整快照，并按 `REALTIME_INTERVAL_MS`（默认 60 秒）轮询最近播放。
 - 采集调度器用**独立的可写连接**（`openWritableConnection()`），与 API 的只读连接在 **WAL 模式**下并发共存 —— 这是 `db/index.js` 里区分三种连接的原因：单例可写（脚本用）/ 独立可写（调度器用）/ 只读（API 用）。
 - 采集失败**只记 `collection_log`、绝不拖垮 API**，继续排下一次。
-- 设 `COLLECT_IN_API=0` 可关调度器，退化为纯只读服务。
+- `COLLECT_IN_API` 与 `REALTIME_IN_API` 可分别关闭每日快照和高频计数器。
 
 ## 模块职责边界（避免改错地方）
 
-- `src/aggregate/periods.js` —— **全项目唯一**的日期/时区/ISO 周逻辑（DRY）。SQL **只接收这里算好的日期串**，绝不在 SQL 里做时区/周运算。加任何日期计算都放这里。
+- `src/aggregate/periods.js` —— **全项目唯一**的日期/时区/滚动周期逻辑（DRY）。日/周/月/年是滚动 1/7/30/365 天；趋势周桶仍采用 ISO 周。
 - `src/aggregate/queries.js` —— 所有聚合 SQL，统一在 `daily_play` 上按 `[start,end]` GROUP BY。排序列走 `ORDER_COL` 白名单防注入，**新增可排序 metric 必须加进白名单**。
 - `src/netease/client.js` —— 网易云接口封装。allData/weekData 走 weapi，今日足迹走 eapi，最近播放走 web 接口。`normalizeSong` 兼容网易云多套返回结构（`al`/`album`、`ar`/`artists` 等），新接口解析优先复用它。
 - `src/netease/crypto.js` —— weapi(AES 双层+自定义 RSA) / eapi(AES-ECB+MD5)。常量多年稳定，**别动**。

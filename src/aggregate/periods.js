@@ -30,32 +30,19 @@ export function isoWeekday(isoDate) {
 }
 
 // period + 锚点日期 → { period, start, end, label }
+// 日/周/月/年统一为以 anchor 为结尾的滚动 1/7/30/365 天。
 export function resolvePeriod(period, anchor, { firstDate, lastDate } = {}) {
   const d = anchor ? DateTime.fromISO(anchor, { zone: TZ }) : DateTime.now().setZone(TZ);
   if (!d.isValid) throw new Error(`非法日期: ${anchor}`);
   switch (period) {
     case 'day':
       return { period, start: d.toISODate(), end: d.toISODate(), label: d.toISODate() };
-    case 'week': {
-      const s = d.startOf('week'); // luxon 默认周一为周首（ISO）
-      const e = d.endOf('week');
-      return {
-        period,
-        start: s.toISODate(),
-        end: e.toISODate(),
-        label: `${s.weekYear}-W${String(s.weekNumber).padStart(2, '0')}`,
-      };
-    }
-    case 'month': {
-      const s = d.startOf('month');
-      const e = d.endOf('month');
-      return { period, start: s.toISODate(), end: e.toISODate(), label: d.toFormat('yyyy-LL') };
-    }
-    case 'year': {
-      const s = d.startOf('year');
-      const e = d.endOf('year');
-      return { period, start: s.toISODate(), end: e.toISODate(), label: d.toFormat('yyyy') };
-    }
+    case 'week':
+      return rollingPeriod(period, d, 7);
+    case 'month':
+      return rollingPeriod(period, d, 30);
+    case 'year':
+      return rollingPeriod(period, d, 365);
     case 'all':
       return {
         period,
@@ -66,6 +53,16 @@ export function resolvePeriod(period, anchor, { firstDate, lastDate } = {}) {
     default:
       throw new Error(`未知 period: ${period}`);
   }
+}
+
+function rollingPeriod(period, end, days) {
+  const start = end.minus({ days: days - 1 });
+  return {
+    period,
+    start: start.toISODate(),
+    end: end.toISODate(),
+    label: `${start.toISODate()}..${end.toISODate()}`,
+  };
 }
 
 // 把 [from,to] 按 granularity 切成桶 [{ bucket, start, end }]

@@ -24,9 +24,6 @@ const MOSAIC_TILE_OFFSETS = [
   { x: 3, y: -1, rotate: 2.3 },
 ];
 const MOSAIC_ROW_OFFSETS = [-7, 2, -4, 5, -2, 7, 0];
-const PERIOD_BY_GRANULARITY = { day: 'day', week: 'week', month: 'month' };
-const GRANULARITY_BY_PERIOD = { day: 'day', week: 'week', month: 'month' };
-
 const nodes = {
   heroSubtitle: document.querySelector('#heroSubtitle'),
   lastSnapshot: document.querySelector('#lastSnapshot'),
@@ -120,15 +117,7 @@ function missingDailyTopText(reason) {
 }
 
 function expandDailyCoverTiles(item, maxTiles = MOSAIC_COLUMNS) {
-  const tiles = [];
-  for (const entry of item.songs || []) {
-    const repeat = Math.max(1, Math.min(Number(entry.plays || 0), maxTiles - tiles.length));
-    for (let count = 0; count < repeat && tiles.length < maxTiles; count += 1) {
-      tiles.push(entry);
-    }
-    if (tiles.length >= maxTiles) break;
-  }
-  return tiles;
+  return (item.songs || []).slice(0, maxTiles);
 }
 
 function renderMosaic(payload = {}) {
@@ -157,7 +146,7 @@ function renderMosaic(payload = {}) {
     row.style.setProperty('--row-index', String(index));
     row.style.setProperty('--row-drift', `${MOSAIC_ROW_OFFSETS[index % MOSAIC_ROW_OFFSETS.length]}px`);
     row.title = coverTiles.length
-      ? `${item.date}: ${formatNumber(item.plays)} 次 · ${formatNumber((item.songs || []).length)} 首`
+      ? `${item.date}: ${item.lower_bound ? '≥ ' : ''}${formatNumber(item.plays)} 次 · ${formatNumber(item.distinct_songs ?? (item.songs || []).length)} 首`
       : `${item.date || '--'}: ${missingDailyTopText(item.reason)}`;
 
     const tiles = (coverTiles.length ? coverTiles : Array.from({ length: MOSAIC_COLUMNS }, () => null)).map((entry, tileIndex) => {
@@ -191,9 +180,9 @@ function renderMosaic(payload = {}) {
 
 function renderHealth(health) {
   nodes.lastSnapshot.textContent = health.last_snapshot || '--';
-  nodes.healthPill.textContent = health.can_day ? '可读日榜' : '攒取中';
+  nodes.healthPill.textContent = health.counter_stale ? '计数延迟' : health.can_day ? '实时计数中' : '计数启动中';
   nodes.heroSubtitle.textContent = health.last_snapshot
-    ? `最新快照 ${health.last_snapshot}，当前差分天数 ${health.have_days}。`
+    ? `最新快照 ${health.last_snapshot}，最近计数 ${health.last_recent_poll_at ? formatPlayTime(Date.parse(health.last_recent_poll_at)) : '--'}。`
     : '还没有可用快照。';
 }
 
@@ -207,11 +196,14 @@ function renderOverview(overview, health) {
     return;
   }
 
-  nodes.metricPlays.textContent = formatNumber(overview.totals.plays);
-  nodes.metricHours.textContent = formatHours(overview.totals.est_hours);
+  const lowerBound = Boolean(overview.meta?.data_quality?.lower_bound);
+  nodes.metricPlays.textContent = `${lowerBound ? '≥' : ''}${formatNumber(overview.totals.plays)}`;
+  nodes.metricHours.textContent = `${lowerBound ? '≥' : ''}${formatHours(overview.totals.est_hours)}`;
   nodes.metricSongs.textContent = formatNumber(overview.totals.distinct_songs);
   nodes.metricDays.textContent = formatNumber(overview.totals.days_tracked);
-  nodes.metricPlaysHint.textContent = `${overview.range.start} 至 ${overview.range.end}`;
+  nodes.metricPlaysHint.textContent = lowerBound
+    ? `${overview.range.start} 至 ${overview.range.end} · 历史数据不完整`
+    : `${overview.range.start} 至 ${overview.range.end}`;
 }
 
 function renderRanking(payload, health) {
@@ -228,6 +220,7 @@ function renderRanking(payload, health) {
   }
 
   const max = Math.max(...items.map((item) => item.plays || 0), 1);
+  const lowerBound = Boolean(payload.meta?.data_quality?.lower_bound);
   const rows = items.map((item) => {
     const row = document.createElement('div');
     row.className = 'rank-row';
@@ -248,7 +241,7 @@ function renderRanking(payload, health) {
 
     const value = document.createElement('span');
     value.className = 'rank-value';
-    value.textContent = `${formatNumber(item.plays)} 次`;
+    value.textContent = `${lowerBound ? '≥' : ''}${formatNumber(item.plays)} 次`;
 
     const bar = document.createElement('span');
     bar.className = 'rank-bar';
@@ -523,7 +516,7 @@ async function loadDashboard() {
     renderHealth(health);
 
     const [overview, ranking, trend, dailyTops, recent, today] = await Promise.all([
-      getJson('/api/overview').catch((error) => ({ error: error.message })),
+      getJson('/api/overview', { period: state.period }).catch((error) => ({ error: error.message })),
       getJson('/api/ranking', { dimension: state.dimension, metric: 'plays', period: state.period, limit: 10 }),
       getJson('/api/trend', { granularity: state.granularity, last: state.granularity === 'day' ? 30 : 12 }),
       getJson('/api/daily-top-songs', { days: 7 }).catch((error) => ({ error: error.message })),
@@ -558,9 +551,6 @@ document.addEventListener('click', (event) => {
   const period = event.target.closest('[data-period]');
   if (period) {
     state.period = period.dataset.period;
-    if (GRANULARITY_BY_PERIOD[state.period]) {
-      state.granularity = GRANULARITY_BY_PERIOD[state.period];
-    }
     loadDashboard();
     return;
   }
@@ -575,7 +565,6 @@ document.addEventListener('click', (event) => {
   const granularity = event.target.closest('[data-granularity]');
   if (granularity) {
     state.granularity = granularity.dataset.granularity;
-    state.period = PERIOD_BY_GRANULARITY[state.granularity] || state.period;
     loadDashboard();
     return;
   }

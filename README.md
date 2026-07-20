@@ -7,37 +7,31 @@
 ![SQLite](https://img.shields.io/badge/db-node%3Asqlite-blue)
 ![Zero deps](https://img.shields.io/badge/runtime%20deps-2-lightgrey)
 
-网易云的听歌排行接口只提供**累计播放次数**（allData，自注册以来的总和）和**最近 7 天滚动窗口**（weekData）—— 唯独没有「某一天听了什么」。`music-record` 每天定时抓一次快照，用相邻两天的累计差值反推出**当日每首歌的播放增量**，保存进本地 SQLite，再对外提供只读的统计 API 和一个轻量前端。
+网易云的听歌排行接口只提供**累计播放次数**（allData，自注册以来的总和）和**最近 7 天滚动窗口**（weekData）—— 唯独没有完整的逐次播放流水。`music-record` 每 60 秒轮询最近播放，用唯一 `playTime` 记录已捕获事件；每天再抓一次累计快照，用差分结果补足漏计，保存进本地 SQLite。
 
 全程只用到两个运行时依赖（Fastify + Luxon），数据库、测试、`.env` 加载、`fetch` 全部走 Node 22 内置能力，无需编译。
 
 ## 特性
 
 - **快照差分引擎** —— 相邻快照累计值作差 → 逐日播放增量，单调裁剪、跨天标记，杜绝「老歌进榜」造成的假尖峰。
-- **双数据源分域** —— `all`（累计差分，真实次数）与 `recent`（最近播放事件，存在性占位）分域共存，各取所长。
-- **多维聚合** —— 歌曲 / 歌手 / 专辑三个维度，天 / 周 / 月 / 年四种周期，附带听歌时长估算。
+- **双数据源取大值** —— 高频 recent 事件计数与 allData 累计差分按「每歌每天取较大值」合并，只补高、不调低。
+- **滚动周期聚合** —— 歌曲 / 歌手 / 专辑三个维度；日 / 周 / 月 / 年对应滚动 1 / 7 / 30 / 365 天。
 - **可视化端点** —— 概览、排行、趋势时序、每日封面墙、GitHub 式日历热力、周几分布，一应俱全。
-- **进程内定时采集** —— API 进程自带每日调度器（默认 04:00），无需 cron 或 Windows 计划任务。
-- **缺数据诚实标注** —— 用 `missing` / `has_gap` / `estimated` 区分「真的是 0」与「那天没抓到」，冷启动期返回「攒取中」而非假数据。
+- **进程内定时采集** —— API 进程自带 60 秒实时计数器和每日快照调度器（默认 04:00），无需 cron。
+- **缺数据诚实标注** —— 历史和采集缺口统计返回下界，前端以 `≥ X` 标注，不伪装成精确值。
 - **一键部署** —— 附 Dockerfile + Compose，多阶段构建、非 root 运行、数据卷持久化、内置健康检查。
 
 ## 工作原理
 
 ```
-        网易云 play/record 接口                  本地 SQLite
-   ┌───────────────────────────┐        ┌────────────────────────┐
-   │ allData  = 累计播放次数     │  抓取   │ snapshot / snapshot_item│
-   │ weekData = 最近7天滚动窗口  │ ─────► │  (不可变原始快照，审计源) │
-   └───────────────────────────┘        └───────────┬────────────┘
-                                                     │ 相邻快照累计值作差
-   昨天 allData:  歌A=120  歌B=88                     ▼
-   今天 allData:  歌A=127  歌B=88            ┌────────────────────────┐
-                    │                       │ daily_play              │
-                    ▼ 差分                   │ (派生事实表：逐日每歌增量)│
-   歌A +7  (归属到昨天)  歌B +0 (跳过)         └───────────┬────────────┘
-                                                     │ 聚合查询
-                                                     ▼
-                                    day / week / month / year 排行 · 趋势 · 热力
+ allData / weekData ──每日快照──► snapshot ──累计差分────┐
+                                                        │ 每歌每天取较大值
+ record/recent/song ──每60秒──► recent_play_event ──计数─┤
+                                                        ▼
+                                                   daily_play
+                                                        │
+                                                        ▼
+                              滚动 1 / 7 / 30 / 365 天排行 · 趋势 · 封面墙
 ```
 
 > [!NOTE]
@@ -103,7 +97,7 @@ npm run api
 打开 <http://127.0.0.1:3000> 查看前端，或直接访问 <http://127.0.0.1:3000/api> 浏览端点列表。
 
 > [!TIP]
-> API 进程默认内置每日采集调度器（`COLLECT_AT`，默认 04:00），所以**日常只需让 `npm run api` 常驻运行**，无需再单独跑 `collect`。设 `COLLECT_IN_API=0` 可关闭，退化为纯只读服务。
+> API 进程默认内置每日采集调度器（`COLLECT_AT`，默认 04:00）和最近播放计数器（默认每 60 秒），所以**日常只需让 `npm run api` 常驻运行**。两者可分别关闭。
 
 ## 配置项
 
@@ -113,7 +107,7 @@ npm run api
 | --- | --- | --- |
 | `NETEASE_UID` | *（必填）* | 你的网易云 UID，听歌排行需设为公开 |
 | `NETEASE_COOKIE` | *（必填）* | 登录 Cookie，只需 `MUSIC_U` 一项 |
-| `TZ_NAME` | `Asia/Shanghai` | 统计时区（周一为周首，ISO 周） |
+| `TZ_NAME` | `Asia/Shanghai` | 统计时区；趋势周桶采用 ISO 周 |
 | `ATTRIBUTION` | `prev` | 差分归属：`prev`=归前一天 / `same`=归当天 |
 | `DB_PATH` | `data/music.db` | SQLite 数据库路径 |
 | `API_PORT` | `3000` | API 服务端口 |
@@ -121,6 +115,9 @@ npm run api
 | `COLLECT_IN_API` | `1` | 是否在 API 进程内挂定时采集 |
 | `COLLECT_AT` | `04:00` | 每日采集触发的本地时刻 `HH:mm` |
 | `COLLECT_ON_START` | `0` | 启动时若当天未抓则立即补抓一次 |
+| `REALTIME_IN_API` | `1` | 是否在 API 进程内运行最近播放计数器 |
+| `REALTIME_INTERVAL_MS` | `60000` | 最近播放轮询间隔（最低 15000ms） |
+| `REALTIME_LIMIT` | `300` | 每次读取最近播放的条数 |
 
 > [!WARNING]
 > 本服务**无鉴权**，且 `.env` 内含你的登录 Cookie。对外暴露时请保持 `API_HOST=127.0.0.1`，由 nginx 反代加 HTTPS/鉴权，切勿直接把 `0.0.0.0` 端口开到公网。
@@ -139,7 +136,7 @@ npm run api
 
 ## API 端点
 
-统计端点均返回 `meta`（含 `period_resolved`、数据新鲜度等），数据不足时返回 `200` + `{ insufficientData: true }`。
+统计端点均返回 `meta`（含 `period_resolved`、`data_quality`、数据新鲜度等）；历史或采集缺口会以 `data_quality.lower_bound=true` 明示。
 
 | 端点 | 说明 |
 | --- | --- |
@@ -160,7 +157,7 @@ npm run api
 - **维度层**（每次抓取 upsert）—— `song` / `artist` / `album` / `song_artist`。
 - **派生事实层** —— `daily_play`：逐日每歌播放增量，**所有排行 / 趋势查询的基表**，可随时从快照层用 `npm run rebuild` 重算。
 
-此外还有实时采集表（`today_listen_*` / `recent_play_*`）和运维表（`collection_log` / `probe` / `meta`）。完整结构见 [`src/db/schema.sql`](src/db/schema.sql)。
+此外还有实时事件表（`recent_play_event`）、计数缺口表（`counter_poll_gap`）及其他运维表。完整结构见 [`src/db/schema.sql`](src/db/schema.sql)。
 
 ## Docker 部署
 

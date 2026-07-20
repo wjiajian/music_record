@@ -1,7 +1,7 @@
 // Fastify 六端点。所有聚合端点回 meta.period_resolved；用 missing/has_gap/estimated
 // 区分「真 0」与「缺数据」；数据不足时回 200 + { insufficientData:true }。
 import { DateTime } from 'luxon';
-import { resolvePeriod, buckets, gapDates, isoWeekday, nowLocalDate, previousDay } from '../aggregate/periods.js';
+import { resolvePeriod, buckets, gapDates, isoWeekday, nowLocalDate } from '../aggregate/periods.js';
 import * as Q from '../aggregate/queries.js';
 import { config } from '../config.js';
 import {
@@ -38,6 +38,34 @@ function freshness(db) {
     fetched_at: latest?.fetched_at ?? null,
     today_listen: Q.latestTodayListenSnapshot(db) || null,
     recent_play: Q.latestRecentPlaySnapshot(db) || null,
+    counter: Q.counterStatus(db),
+  };
+}
+
+function localDateFromISO(value) {
+  if (!value) return null;
+  const dt = DateTime.fromISO(value, { setZone: true }).setZone(config.tz);
+  return dt.isValid ? dt.toISODate() : null;
+}
+
+function dataQuality(db, start, end) {
+  const counter = Q.counterStatus(db);
+  const gaps = Q.counterPollGaps(db).filter((gap) => {
+    const gapStart = localDateFromISO(gap.started_at);
+    const gapEnd = localDateFromISO(gap.ended_at) || nowLocalDate();
+    return gapStart && gapStart <= end && gapEnd >= start;
+  });
+  const lastSuccessMs = counter.last_success_at ? Date.parse(counter.last_success_at) : NaN;
+  const stale =
+    end >= nowLocalDate() &&
+    (!Number.isFinite(lastSuccessMs) || Date.now() - lastSuccessMs > config.realtime.intervalMs * 3);
+  const historical = !counter.complete_from || start < counter.complete_from;
+  return {
+    lower_bound: historical || gaps.length > 0 || stale,
+    historical,
+    has_gap: gaps.length > 0,
+    stale,
+    complete_from: counter.complete_from,
   };
 }
 
@@ -50,7 +78,13 @@ export default async function routes(fastify) {
     const haveDays = Q.distinctPlayDates(db);
     const latest = Q.latestSnapshot(db);
     const latestToday = Q.latestTodayListenSnapshot(db);
-    const N = config.sufficiency;
+    const counter = Q.counterStatus(db);
+    const today = nowLocalDate();
+    const completeDays = counter.complete_from
+      ? Math.max(0, DateTime.fromISO(today).diff(DateTime.fromISO(counter.complete_from), 'days').days + 1)
+      : 0;
+    const lastSuccessMs = counter.last_success_at ? Date.parse(counter.last_success_at) : NaN;
+    const counterStale = !Number.isFinite(lastSuccessMs) || Date.now() - lastSuccessMs > config.realtime.intervalMs * 3;
     return {
       last_snapshot: latest?.snapshot_date ?? null,
       last_fetch_status: latest?.status ?? null,
@@ -59,10 +93,13 @@ export default async function routes(fastify) {
       snapshot_count: dates.length,
       have_days: haveDays,
       gap_dates: gapDates(dates),
-      can_day: haveDays >= N.day,
-      can_week: haveDays >= N.week,
-      can_month: haveDays >= N.month,
-      can_year: haveDays >= N.year,
+      last_recent_poll_at: counter.last_success_at,
+      counter_complete_from: counter.complete_from,
+      counter_stale: counterStale,
+      can_day: Boolean(counter.last_success_at) && !counterStale,
+      can_week: completeDays >= 7,
+      can_month: completeDays >= 30,
+      can_year: completeDays >= 365,
     };
   });
 
@@ -70,19 +107,23 @@ export default async function routes(fastify) {
   fastify.get('/api/overview', async (req) => {
     const { dates, first, last } = dataWindow(db);
     if (!first || !last) return insufficient(db, 1);
-    const start = req.query.from || first;
-    const end = req.query.to || last;
+    const period = req.query.period || 'all';
+    const anchor = req.query.date || nowLocalDate();
+    const resolved = resolvePeriod(period, anchor, { firstDate: first, lastDate: anchor });
+    const start = req.query.from || resolved.start;
+    const end = req.query.to || resolved.end;
 
     const t = Q.totals(db, start, end);
     const gaps = gapDates(dates).filter((g) => g >= start && g <= end);
 
-    const thisW = resolvePeriod('week', last);
+    const thisW = resolvePeriod('week', anchor);
     const lastWAnchor = DateTime.fromISO(thisW.start, { zone: config.tz }).minus({ days: 1 }).toISODate();
     const lastW = resolvePeriod('week', lastWAnchor);
     const tw = Q.totals(db, thisW.start, thisW.end).plays;
     const lw = Q.totals(db, lastW.start, lastW.end).plays;
 
     return {
+      meta: { period_resolved: resolved, data_quality: dataQuality(db, start, end) },
       range: { start, end },
       totals: {
         plays: t.plays,
@@ -113,43 +154,8 @@ export default async function routes(fastify) {
     const period = req.query.period || 'all';
     const limit = Math.min(Number(req.query.limit || 50), 500);
     const offset = Number(req.query.offset || 0);
-    const pr = resolvePeriod(period, req.query.date || last, { firstDate: first, lastDate: last });
-
-    const haveDays = Q.distinctPlayDates(db);
-    const need = config.sufficiency[period] ?? 1;
-    if (haveDays < need) return insufficient(db, need, { meta: { period_resolved: pr } });
-
-    if (dimension === 'song') {
-      const latest = Q.latestSnapshotId(db);
-      const useLatestSnapshot = latest && (!req.query.date || req.query.date === latest.snapshot_date);
-      if (useLatestSnapshot && period === 'all') {
-        const items = Q.rankingSongsFromAllSnapshot(db, latest.id, metric, limit, offset);
-        return {
-          meta: { dimension, metric, period_resolved: pr, source: 'snapshot_all', freshness: freshness(db) },
-          items,
-          total: Q.countSnapshotSongs(db, 'snapshot_item', latest.id),
-        };
-      }
-      if (useLatestSnapshot && period === 'week') {
-        const items = Q.rankingSongsFromWeekSnapshot(db, latest.id, metric, limit, offset);
-        return {
-          meta: { dimension, metric, period_resolved: pr, source: 'snapshot_week', freshness: freshness(db) },
-          items,
-          total: Q.countSnapshotSongs(db, 'snapshot_week_item', latest.id),
-        };
-      }
-      if (useLatestSnapshot && period === 'day') {
-        const prev = Q.previousSnapshotId(db, latest.id);
-        const items = Q.rankingSongsFromWeekSnapshotDelta(db, latest.id, prev?.id ?? null, metric, limit, offset);
-        if (items.length) {
-          return {
-            meta: { dimension, metric, period_resolved: pr, source: 'snapshot_week_delta', freshness: freshness(db) },
-            items,
-            total: Q.countWeekSnapshotDeltaSongs(db, latest.id, prev.id),
-          };
-        }
-      }
-    }
+    const anchor = req.query.date || nowLocalDate();
+    const pr = resolvePeriod(period, anchor, { firstDate: first, lastDate: anchor });
 
     let items;
     if (dimension === 'artist') items = Q.rankingArtists(db, pr.start, pr.end, metric, limit, offset);
@@ -157,7 +163,14 @@ export default async function routes(fastify) {
     else items = Q.rankingSongs(db, pr.start, pr.end, metric, limit, offset);
 
     return {
-      meta: { dimension, metric, period_resolved: pr, freshness: freshness(db) },
+      meta: {
+        dimension,
+        metric,
+        period_resolved: pr,
+        source: 'daily_play',
+        data_quality: dataQuality(db, pr.start, pr.end),
+        freshness: freshness(db),
+      },
       items,
       total: Q.countDimension(db, dimension, pr.start, pr.end),
     };
@@ -170,7 +183,7 @@ export default async function routes(fastify) {
 
     const granularity = req.query.granularity || 'day';
     const metric = req.query.metric || 'plays';
-    const to = req.query.to || last;
+    const to = req.query.to || nowLocalDate();
     let from = req.query.from;
     if (!from) {
       if (req.query.last) {
@@ -205,16 +218,25 @@ export default async function routes(fastify) {
     });
 
     const entity = filter.songId ? 'song' : filter.artistId ? 'artist' : filter.albumId ? 'album' : 'all';
-    return { meta: { granularity, metric, entity, freshness: freshness(db) }, series };
+    return {
+      meta: {
+        granularity,
+        metric,
+        entity,
+        data_quality: dataQuality(db, from, to),
+        freshness: freshness(db),
+      },
+      series,
+    };
   });
 
-  // ---- 最近 N 天每日歌曲封面行（默认从最新快照前一天开始）----
+  // ---- 最近 N 天每日歌曲封面行（包含今天；每首歌仅占一个封面格）----
   fastify.get('/api/daily-top-songs', async (req) => {
-    const dates = Q.allSnapshotDates(db);
     const days = Math.min(Math.max(Number(req.query.days || 7), 1), 31);
-    const limit = Math.min(Math.max(Number(req.query.limit || 24), 1), 64);
-    const end = req.query.to || previousDay(nowLocalDate());
+    const limit = Math.min(Math.max(Number(req.query.limit || 8), 1), 64);
+    const end = req.query.to || nowLocalDate();
     const start = DateTime.fromISO(end, { zone: config.tz }).minus({ days: days - 1 }).toISODate();
+    const totalsByDate = new Map(Q.dailyTotals(db, start, end).map((item) => [item.date, item]));
     const songsByDate = new Map();
     for (const item of Q.dailyTopSongs(db, start, end, limit)) {
       if (!songsByDate.has(item.date)) songsByDate.set(item.date, []);
@@ -222,33 +244,48 @@ export default async function routes(fastify) {
         rank: item.rank,
         plays: item.plays,
         est_minutes: item.est_minutes,
+        last_play_time: item.last_play_time,
         song: item.song,
       });
     }
-    const gaps = new Set(gapDates(dates).filter((date) => date >= start && date <= end));
 
     const items = Array.from({ length: days }, (_, index) => {
       const date = DateTime.fromISO(end, { zone: config.tz }).minus({ days: index }).toISODate();
       const songs = songsByDate.get(date) || [];
+      const quality = dataQuality(db, date, date);
+      const totals = totalsByDate.get(date);
       if (songs.length) {
         return {
           date,
           missing: false,
-          plays: songs.reduce((sum, item) => sum + item.plays, 0),
+          lower_bound: quality.lower_bound,
+          plays: totals?.plays || 0,
+          distinct_songs: totals?.songs || songs.length,
           songs,
         };
       }
       return {
         date,
-        missing: true,
-        reason: gaps.has(date) ? 'gap' : 'empty',
+        missing: quality.has_gap || quality.stale,
+        lower_bound: quality.lower_bound,
+        reason: quality.has_gap || quality.stale ? 'gap' : 'empty',
         plays: 0,
+        distinct_songs: 0,
         est_minutes: 0,
         songs: [],
       };
     });
 
-    return { meta: { range: { start, end }, days, limit, freshness: freshness(db) }, items };
+    return {
+      meta: {
+        range: { start, end },
+        days,
+        limit,
+        data_quality: dataQuality(db, start, end),
+        freshness: freshness(db),
+      },
+      items,
+    };
   });
 
   // ---- 日历热力（GitHub 贡献图式）----

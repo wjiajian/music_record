@@ -22,7 +22,7 @@ export const config = {
   dbPath: process.env.DB_PATH || path.join(root, 'data', 'music.db'),
   schemaPath: path.join(root, 'src', 'db', 'schema.sql'),
 
-  // 统计时区与周规则（周一为周首，ISO 周）
+  // 统计时区；趋势图按周分桶时仍采用 ISO 周。
   tz: process.env.TZ_NAME || 'Asia/Shanghai',
 
   // 差分归属规则（由 §6 探针实测 allData 更新延迟后拍板）：
@@ -45,8 +45,13 @@ export const config = {
     onStart: process.env.COLLECT_ON_START === '1',
   },
 
-  // 冷启动门槛：攒够多少「有差分的天数」才出对应周期，否则返回「攒取中」
-  sufficiency: { day: 1, week: 7, month: 30, year: 365 },
+  // 高频最近播放计数器。网易云 recent 接口只暴露每首歌最后一次播放时间，
+  // 因此轮询间隔越短，捕获重复播放的概率越高；默认按已确认的 60 秒运行。
+  realtime: {
+    inApi: process.env.REALTIME_IN_API !== '0',
+    intervalMs: Math.max(Number(process.env.REALTIME_INTERVAL_MS || 60000), 15000),
+    limit: Math.min(Math.max(Number(process.env.REALTIME_LIMIT || 300), 1), 300),
+  },
 };
 
 export function requireUid() {

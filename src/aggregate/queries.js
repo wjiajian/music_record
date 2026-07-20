@@ -231,6 +231,7 @@ export function dailyTotals(db, start, end, opts = {}) {
       `SELECT dp.play_date AS date,
               SUM(dp.plays) AS plays,
               SUM(dp.plays * COALESCE(s.duration_ms,0)) AS est_ms,
+              COUNT(DISTINCT dp.song_id) AS songs,
               MAX(dp.is_estimated) AS estimated
        FROM daily_play dp ${join}
        WHERE ${where.join(' AND ')}
@@ -242,7 +243,12 @@ export function dailyTotals(db, start, end, opts = {}) {
 export function dailyTopSongs(db, start, end, limitPerDay = 24) {
   const rows = db
     .prepare(
-      `WITH ranked AS (
+      `WITH event_last AS (
+         SELECT play_date, song_id, MAX(play_time) AS last_play_time
+         FROM recent_play_event
+         WHERE play_date BETWEEN ? AND ?
+         GROUP BY play_date, song_id
+       ), ranked AS (
          SELECT dp.play_date AS date,
                 dp.song_id AS song_id,
                 s.name AS song_name,
@@ -251,24 +257,27 @@ export function dailyTopSongs(db, start, end, limitPerDay = 24) {
                 al.pic_url AS pic_url,
                 SUM(dp.plays) AS plays,
                 SUM(dp.plays * COALESCE(s.duration_ms,0)) AS est_ms,
+                MAX(el.last_play_time) AS last_play_time,
                 ROW_NUMBER() OVER (
                   PARTITION BY dp.play_date
                   ORDER BY SUM(dp.plays) DESC,
-                           SUM(dp.plays * COALESCE(s.duration_ms,0)) DESC,
+                           MAX(el.last_play_time) DESC,
                            dp.song_id
                 ) AS rn
          FROM daily_play dp
          JOIN song s ON s.id = dp.song_id
          LEFT JOIN album al ON al.id = s.album_id
+         LEFT JOIN event_last el ON el.play_date = dp.play_date AND el.song_id = dp.song_id
          WHERE dp.play_date BETWEEN ? AND ?
          GROUP BY dp.play_date, dp.song_id
        )
-       SELECT date, song_id, song_name, album_id, album_name, pic_url, plays, est_ms, rn
+       SELECT date, song_id, song_name, album_id, album_name, pic_url,
+              plays, est_ms, last_play_time, rn
        FROM ranked
        WHERE rn <= ?
        ORDER BY date DESC, rn`
     )
-    .all(start, end, limitPerDay);
+    .all(start, end, start, end, limitPerDay);
 
   const arStmt = db.prepare(
     `SELECT a.id, a.name FROM song_artist sa JOIN artist a ON a.id = sa.artist_id
@@ -279,6 +288,7 @@ export function dailyTopSongs(db, start, end, limitPerDay = 24) {
     rank: r.rn,
     plays: r.plays,
     est_minutes: Math.round((r.est_ms || 0) / 60000),
+    last_play_time: r.last_play_time,
     song: {
       id: r.song_id,
       name: r.song_name,
@@ -374,6 +384,28 @@ export function latestRecentPlaySnapshot(db) {
   } catch {
     return null;
   }
+}
+
+export function counterStatus(db) {
+  const rows = db
+    .prepare(
+      `SELECT key, value FROM meta
+       WHERE key IN ('counter_started_at','counter_complete_from','counter_last_success_at','counter_last_error')`
+    )
+    .all();
+  const values = Object.fromEntries(rows.map((row) => [row.key, row.value]));
+  return {
+    started_at: values.counter_started_at || null,
+    complete_from: values.counter_complete_from || null,
+    last_success_at: values.counter_last_success_at || null,
+    last_error: values.counter_last_error || null,
+  };
+}
+
+export function counterPollGaps(db) {
+  return db
+    .prepare('SELECT started_at, ended_at, reason FROM counter_poll_gap ORDER BY started_at')
+    .all();
 }
 
 // ---- 我的歌单（只读，采集器已落库）--------------------------------

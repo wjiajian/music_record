@@ -119,6 +119,13 @@ function normalizeArtists(arr = []) {
     .filter((a) => a.id != null || a.name);
 }
 
+function secureMediaUrl(value) {
+  if (typeof value !== 'string' || !value) return value ?? null;
+  if (value.startsWith('http://')) return `https://${value.slice('http://'.length)}`;
+  if (value.startsWith('//')) return `https:${value}`;
+  return value;
+}
+
 export function normalizeSong(raw = {}) {
   const s = raw.song || raw.songData || raw.resourceExtInfo?.songData || raw.resourceExtInfo?.song || raw;
   const album = s.al || s.album || s.albumData || raw.album || null;
@@ -127,12 +134,12 @@ export function normalizeSong(raw = {}) {
     id: s.id ?? s.songId ?? raw.songId ?? raw.resourceId ?? null,
     name: s.name ?? s.songName ?? raw.songName ?? raw.name ?? '',
     durationMs: s.dt ?? s.duration ?? s.durationMs ?? raw.duration ?? raw.durationMs ?? null,
-    picUrl: s.picUrl ?? raw.picUrl ?? null,
+    picUrl: secureMediaUrl(s.picUrl ?? raw.picUrl ?? null),
     album: album
       ? {
           id: album.id ?? album.albumId ?? null,
           name: album.name ?? album.albumName ?? '',
-          picUrl: album.picUrl ?? album.coverUrl ?? album.pic ?? album.blurPicUrl ?? null,
+          picUrl: secureMediaUrl(album.picUrl ?? album.coverUrl ?? album.pic ?? album.blurPicUrl ?? null),
         }
       : null,
     artists: Array.isArray(artists) ? normalizeArtists(artists) : normalizeArtists([artists]),
@@ -191,7 +198,7 @@ function normalizePlaylist(item) {
   return {
     id: item.id,
     name: item.name,
-    coverImgUrl: item.coverImgUrl ?? item.coverUrl ?? null,
+    coverImgUrl: secureMediaUrl(item.coverImgUrl ?? item.coverUrl ?? null),
     trackCount: item.trackCount ?? item.trackIds?.length ?? 0,
     playCount: item.playCount ?? 0,
     subscribed: Boolean(item.subscribed),

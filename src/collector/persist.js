@@ -109,44 +109,53 @@ export function saveTodayListenSnapshot(db, listenDate, fetchedAtISO, items, raw
   return snapshotId;
 }
 
-function localDateFromPlayTime(playTime) {
+export function localDateFromPlayTime(playTime) {
   const n = Number(playTime);
   if (!Number.isFinite(n) || n <= 0) return null;
   const millis = n < 10000000000 ? n * 1000 : n;
-  const dt = DateTime.fromMillis(millis, { zone: 'utc' }).setZone(config.tz);
+  const dt = DateTime.fromMillis(millis, { zone: config.tz });
   return dt.isValid ? dt.toISODate() : null;
 }
 
-// 当天在「最近播放」里出现过的去重歌曲集合。
-// 数据源约束：网易云 recent 对每首歌只保留最近一次播放时刻（去重），无法反映
-// 当天循环播放次数。故 recent 只作「今天听过这首歌」的存在性标记，不承载次数。
-function recentSongsForDate(db, playDate) {
-  const songs = new Set();
-  const events = db.prepare('SELECT song_id, play_time FROM recent_play_event').all();
-  for (const event of events) {
-    if (localDateFromPlayTime(event.play_time) !== playDate) continue;
-    songs.add(event.song_id);
-  }
-  return [...songs];
+export function recentPlayDates(items) {
+  return [
+    ...new Set(
+      (items || [])
+        .map((item) => localDateFromPlayTime(item.playTime))
+        .filter(Boolean)
+    ),
+  ];
 }
 
-// recent 存在性占位：每首歌记 1 次，且只补 allData 差分没有的歌（DO NOTHING 不
-// 覆盖 source='all' 的真实次数）。真实播放次数（含循环）一律以 allData 差分为准。
+// 高频 recent 计数：同一首歌每个不同 play_time 计一次。与 allData 差分冲突时按
+// 每首歌每天取较大值；recent 只会补高，不会把 allData 已知次数调低。
 export function replaceDailyPlayWithRecentEvents(db, playDate) {
-  const songIds = recentSongsForDate(db, playDate);
-  if (!songIds.length) {
+  const counts = db
+    .prepare(
+      `SELECT song_id, COUNT(*) AS plays
+       FROM recent_play_event
+       WHERE play_date = ?
+       GROUP BY song_id`
+    )
+    .all(playDate);
+  if (!counts.length) {
     return { replaced: false, written: 0, skipped: 'no_recent_events' };
   }
 
   db.prepare("DELETE FROM daily_play WHERE play_date=? AND source='recent'").run(playDate);
   const ins = db.prepare(
     `INSERT INTO daily_play(play_date,song_id,plays,span_days,is_estimated,source)
-     VALUES(?,?,1,1,0,'recent')
-     ON CONFLICT(play_date,song_id) DO NOTHING`
+     VALUES(?,?,?,1,0,'recent')
+     ON CONFLICT(play_date,song_id) DO UPDATE SET
+       plays=excluded.plays,
+       span_days=1,
+       is_estimated=0,
+       source='recent'
+     WHERE excluded.plays > daily_play.plays`
   );
   let written = 0;
-  for (const songId of songIds) {
-    const r = ins.run(playDate, songId);
+  for (const item of counts) {
+    const r = ins.run(playDate, item.song_id, item.plays);
     written += Number(r.changes) || 0;
   }
   return { replaced: true, written, skipped: null };
@@ -156,9 +165,9 @@ export function applyRecentPlayEvents(db, dates = null) {
   const targetDates = dates || [
     ...new Set(
       db
-        .prepare('SELECT play_time FROM recent_play_event ORDER BY play_time')
+        .prepare('SELECT play_date, play_time FROM recent_play_event ORDER BY play_time')
         .all()
-        .map((event) => localDateFromPlayTime(event.play_time))
+        .map((event) => event.play_date || localDateFromPlayTime(event.play_time))
         .filter(Boolean)
     ),
   ];
@@ -170,6 +179,37 @@ export function applyRecentPlayEvents(db, dates = null) {
     if (r.replaced) replaced++;
   }
   return { dates: targetDates.length, replaced, written };
+}
+
+// 只落唯一播放事件，不保存每分钟完整 300 条快照，避免高频轮询导致数据库膨胀。
+export function saveRecentPlayEvents(db, fetchedAtISO, items) {
+  const ins = db.prepare(
+    `INSERT INTO recent_play_event(song_id,play_time,play_date,source_type,first_seen_at,last_seen_at)
+     VALUES(?,?,?,?,?,?)
+     ON CONFLICT(song_id,play_time,source_type) DO NOTHING`
+  );
+  const touch = db.prepare(
+    `UPDATE recent_play_event SET last_seen_at=?, play_date=COALESCE(play_date,?)
+     WHERE song_id=? AND play_time=? AND source_type=?`
+  );
+  let inserted = 0;
+  for (const item of items || []) {
+    if (item.playTime == null) continue;
+    const sourceType = item.sourceType == null ? '' : String(item.sourceType);
+    const playDate = localDateFromPlayTime(item.playTime);
+    if (!playDate) continue;
+    const result = ins.run(
+      item.song.id,
+      item.playTime,
+      playDate,
+      sourceType,
+      fetchedAtISO,
+      fetchedAtISO
+    );
+    if (Number(result.changes)) inserted += 1;
+    else touch.run(fetchedAtISO, playDate, item.song.id, item.playTime, sourceType);
+  }
+  return { inserted, dates: recentPlayDates(items) };
 }
 
 export function saveRecentPlaySnapshot(db, fetchedAtISO, items, rawJsonString, { rawCode = null } = {}) {
@@ -185,11 +225,6 @@ export function saveRecentPlaySnapshot(db, fetchedAtISO, items, rawJsonString, {
     `INSERT INTO recent_play_item(snapshot_id,position,song_id,play_time,play_count,rank,source_type)
      VALUES(?,?,?,?,?,?,?)`
   );
-  const upEvent = db.prepare(
-    `INSERT INTO recent_play_event(song_id,play_time,source_type,first_seen_at,last_seen_at)
-     VALUES(?,?,?,?,?)
-     ON CONFLICT(song_id,play_time,source_type) DO UPDATE SET last_seen_at=excluded.last_seen_at`
-  );
   items.forEach((it, index) => {
     const sourceType = it.sourceType == null ? null : String(it.sourceType);
     insItem.run(
@@ -201,9 +236,56 @@ export function saveRecentPlaySnapshot(db, fetchedAtISO, items, rawJsonString, {
       it.rank ?? null,
       sourceType
     );
-    if (it.playTime != null) {
-      upEvent.run(it.song.id, it.playTime, sourceType ?? '', fetchedAtISO, fetchedAtISO);
-    }
   });
+  saveRecentPlayEvents(db, fetchedAtISO, items);
   return snapshotId;
+}
+
+function metaValue(db, key) {
+  return db.prepare('SELECT value FROM meta WHERE key=?').get(key)?.value ?? null;
+}
+
+function setMeta(db, key, value) {
+  db.prepare(
+    `INSERT INTO meta(key,value) VALUES(?,?)
+     ON CONFLICT(key) DO UPDATE SET value=excluded.value`
+  ).run(key, String(value));
+}
+
+// 成功轮询：更新水位、闭合失败 gap，并在首次启动时把次日标为首个完整自然日。
+export function markCounterPollSuccess(db, fetchedAtISO, intervalMs = config.realtime.intervalMs) {
+  const previous = metaValue(db, 'counter_last_success_at');
+  const openGap = db
+    .prepare('SELECT id FROM counter_poll_gap WHERE ended_at IS NULL ORDER BY id DESC LIMIT 1')
+    .get();
+  if (openGap) {
+    db.prepare('UPDATE counter_poll_gap SET ended_at=? WHERE id=?').run(fetchedAtISO, openGap.id);
+  } else if (previous) {
+    const elapsed = Date.parse(fetchedAtISO) - Date.parse(previous);
+    if (Number.isFinite(elapsed) && elapsed > intervalMs * 3) {
+      db.prepare(
+        'INSERT INTO counter_poll_gap(started_at,ended_at,reason) VALUES(?,?,?)'
+      ).run(previous, fetchedAtISO, 'poll_delay');
+    }
+  }
+
+  if (!metaValue(db, 'counter_started_at')) {
+    const local = DateTime.fromISO(fetchedAtISO, { setZone: true }).setZone(config.tz);
+    setMeta(db, 'counter_started_at', fetchedAtISO);
+    setMeta(db, 'counter_complete_from', local.plus({ days: 1 }).startOf('day').toISODate());
+  }
+  setMeta(db, 'counter_last_success_at', fetchedAtISO);
+  db.prepare("DELETE FROM meta WHERE key='counter_last_error'").run();
+}
+
+export function markCounterPollFailure(db, failedAtISO, error) {
+  const open = db
+    .prepare('SELECT id FROM counter_poll_gap WHERE ended_at IS NULL ORDER BY id DESC LIMIT 1')
+    .get();
+  if (!open) {
+    db.prepare(
+      'INSERT INTO counter_poll_gap(started_at,ended_at,reason) VALUES(?,NULL,?)'
+    ).run(failedAtISO, error?.message || String(error));
+  }
+  setMeta(db, 'counter_last_error', error?.message || String(error));
 }

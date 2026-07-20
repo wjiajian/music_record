@@ -2,6 +2,7 @@
 import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import path from 'node:path';
+import { DateTime } from 'luxon';
 import { config } from '../config.js';
 
 let _db = null;
@@ -51,6 +52,33 @@ export function initSchema(db = getDb()) {
   } catch {
     /* 列已存在，忽略 */
   }
+  // 老库补 recent_play_event.play_date；新库已由 schema.sql 直接创建。
+  try {
+    db.exec('ALTER TABLE recent_play_event ADD COLUMN play_date TEXT');
+  } catch {
+    /* 列已存在，忽略 */
+  }
+  db.exec('CREATE INDEX IF NOT EXISTS idx_recentplay_event_date ON recent_play_event(play_date, song_id)');
+
+  // 历史事件补本地归属日，供高频计数按日聚合。实际数据量很小，迁移只跑 NULL 行。
+  const missingDates = db
+    .prepare('SELECT song_id, play_time, source_type FROM recent_play_event WHERE play_date IS NULL')
+    .all();
+  if (missingDates.length) {
+    const update = db.prepare(
+      'UPDATE recent_play_event SET play_date=? WHERE song_id=? AND play_time=? AND source_type=?'
+    );
+    for (const event of missingDates) {
+      const n = Number(event.play_time);
+      if (!Number.isFinite(n) || n <= 0) continue;
+      const millis = n < 10000000000 ? n * 1000 : n;
+      const playDate = DateTime.fromMillis(millis, { zone: config.tz }).toISODate();
+      if (playDate) update.run(playDate, event.song_id, event.play_time, event.source_type);
+    }
+  }
+  // HTTPS 页面会拦截 http 封面；老库在迁移时一次性升级已有网易云资源地址。
+  db.exec("UPDATE album SET pic_url='https://' || substr(pic_url,8) WHERE pic_url LIKE 'http://%'");
+  db.exec("UPDATE playlist SET cover_img_url='https://' || substr(cover_img_url,8) WHERE cover_img_url LIKE 'http://%'");
   return db;
 }
 

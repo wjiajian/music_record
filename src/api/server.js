@@ -50,8 +50,8 @@ app
   .listen({ port: config.api.port, host: config.api.host })
   .then((addr) => {
     app.log.info(`api 已启动：${addr}`);
-    // 进程内每日采集调度（替代 Windows 计划任务；COLLECT_IN_API=0 可关）
-    if (config.collect.inApi) {
+    // 每日快照与 60 秒最近播放计数器共用同一写连接/队列。
+    if (config.collect.inApi || config.realtime.inApi) {
       const stop = startDailyCollectScheduler({ logger: app.log });
       const shutdown = () => {
         stop();
@@ -60,7 +60,7 @@ app
       process.on('SIGINT', shutdown);
       process.on('SIGTERM', shutdown);
     } else {
-      app.log.info('[scheduler] COLLECT_IN_API=0，进程内采集已禁用');
+      app.log.info('[scheduler] 每日采集与高频计数器均已禁用');
     }
   })
   .catch((err) => {

@@ -4,7 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import fs from 'node:fs';
 import { collectPlaylists } from '../src/collector/playlists.js';
 import { userPlaylists, playlistTracks } from '../src/aggregate/queries.js';
-import { fetchUserPlaylists } from '../src/netease/client.js';
+import { fetchUserPlaylists, normalizeSong } from '../src/netease/client.js';
 
 function freshDb() {
   const db = new DatabaseSync(':memory:');
@@ -12,6 +12,18 @@ function freshDb() {
   db.exec(fs.readFileSync(new URL('../src/db/schema.sql', import.meta.url), 'utf8'));
   return db;
 }
+
+test('normalizeSong 把网易云 http 封面升级为 https，避免 HTTPS 页面混合内容拦截', () => {
+  const song = normalizeSong({
+    id: 1,
+    name: 'song',
+    picUrl: '//p1.music.126.net/song.jpg',
+    al: { id: 2, name: 'album', picUrl: 'http://p1.music.126.net/album.jpg' },
+    ar: [],
+  });
+  assert.equal(song.picUrl, 'https://p1.music.126.net/song.jpg');
+  assert.equal(song.album.picUrl, 'https://p1.music.126.net/album.jpg');
+});
 
 // 假歌单元信息（对齐 normalizePlaylist 输出形状）
 function pl(id, trackCount, extra = {}) {

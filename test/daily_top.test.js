@@ -102,3 +102,38 @@ test('dailyTopSongs 支持限制每天返回数量', () => {
   assert.equal(rows.length, 1);
   assert.equal(rows[0].song.id, 1);
 });
+
+test('dailyTopSongs 播放数相同时按最后播放时间倒序', () => {
+  const db = freshDb();
+  seedSong(db, {
+    id: 1,
+    name: 'earlier',
+    durationMs: 180000,
+    albumId: 101,
+    albumName: 'earlier album',
+    picUrl: 'https://example.test/earlier.jpg',
+    artistId: 201,
+    artistName: 'earlier artist',
+  });
+  seedSong(db, {
+    id: 2,
+    name: 'later',
+    durationMs: 180000,
+    albumId: 102,
+    albumName: 'later album',
+    picUrl: 'https://example.test/later.jpg',
+    artistId: 202,
+    artistName: 'later artist',
+  });
+  seedDailyPlay(db, '2026-06-30', 1, 2);
+  seedDailyPlay(db, '2026-06-30', 2, 2);
+  const ins = db.prepare(
+    `INSERT INTO recent_play_event(song_id,play_time,play_date,source_type,first_seen_at,last_seen_at)
+     VALUES(?,?,?,?,?,?)`
+  );
+  ins.run(1, 1000, '2026-06-30', 'SONG', '2026-06-30T00:00:00Z', '2026-06-30T00:00:00Z');
+  ins.run(2, 2000, '2026-06-30', 'SONG', '2026-06-30T00:00:00Z', '2026-06-30T00:00:00Z');
+
+  const rows = dailyTopSongs(db, '2026-06-30', '2026-06-30');
+  assert.deepEqual(rows.map((row) => row.song.id), [2, 1]);
+});

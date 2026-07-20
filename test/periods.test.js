@@ -3,28 +3,28 @@ import test from 'node:test';
 import assert from 'node:assert';
 import { resolvePeriod, dayDiff, buckets, gapDates } from '../src/aggregate/periods.js';
 
-test('week 解析为 周一..周日（ISO），end-start=6 天', () => {
-  const r = resolvePeriod('week', '2026-06-29'); // 周一
-  assert.equal(r.start, '2026-06-29');
-  assert.equal(r.end, '2026-07-05');
-  assert.equal(r.label, '2026-W27');
+test('week 解析为包含锚点的滚动近 7 天', () => {
+  const r = resolvePeriod('week', '2026-07-20');
+  assert.equal(r.start, '2026-07-14');
+  assert.equal(r.end, '2026-07-20');
+  assert.equal(r.label, '2026-07-14..2026-07-20');
   assert.equal(dayDiff(r.end, r.start), 6);
 });
 
-test('跨年周用 weekYear（2026-12-31 属于 2026-W53 或 2027-W01）', () => {
+test('滚动 7 天支持跨年', () => {
   const r = resolvePeriod('week', '2026-12-31');
-  assert.match(r.label, /^\d{4}-W\d{2}$/);
-  // anchor 落在 [start,end] 内
-  assert.ok(r.start <= '2026-12-31' && '2026-12-31' <= r.end);
+  assert.equal(r.start, '2026-12-25');
+  assert.equal(r.end, '2026-12-31');
 });
 
-test('month / year 解析', () => {
+test('month / year 分别解析为滚动 30 / 365 天', () => {
   assert.deepEqual(
     { s: resolvePeriod('month', '2026-02-15').start, e: resolvePeriod('month', '2026-02-15').end, l: resolvePeriod('month', '2026-02-15').label },
-    { s: '2026-02-01', e: '2026-02-28', l: '2026-02' }
+    { s: '2026-01-17', e: '2026-02-15', l: '2026-01-17..2026-02-15' }
   );
   const y = resolvePeriod('year', '2026-08-08');
-  assert.deepEqual([y.start, y.end, y.label], ['2026-01-01', '2026-12-31', '2026']);
+  assert.equal(y.end, '2026-08-08');
+  assert.equal(dayDiff(y.end, y.start), 364);
 });
 
 test('dayDiff 与 gapDates', () => {
