@@ -35,6 +35,7 @@ app.get('/api', async () => ({
     '/api/overview',
     '/api/ranking',
     '/api/trend',
+    '/api/cover',
     '/api/daily-top-songs',
     '/api/calendar',
     '/api/weekday',

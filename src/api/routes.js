@@ -9,6 +9,7 @@ import {
   fetchSongDetails,
   fetchTodayListenSongs,
 } from '../netease/client.js';
+import { CoverCacheError, coverBrowserCacheControl, getCachedCover } from './coverCache.js';
 
 const WEEKDAY_LABEL = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
 
@@ -71,6 +72,30 @@ function dataQuality(db, start, end) {
 
 export default async function routes(fastify) {
   const db = fastify.db;
+
+  // ---- 网易云封面持久化缓存（封面墙、歌曲行、歌单共用）----
+  fastify.get('/api/cover', async (req, reply) => {
+    try {
+      const cover = await getCachedCover(req.query.url);
+      reply
+        .header('cache-control', coverBrowserCacheControl)
+        .header('content-type', cover.contentType)
+        .header('etag', cover.etag)
+        .header('x-content-type-options', 'nosniff')
+        .header('x-cover-cache', cover.cacheStatus);
+      if ((req.headers['if-none-match'] || '').split(/\s*,\s*/).includes(cover.etag)) {
+        return reply.code(304).send();
+      }
+      return reply.send(cover.body);
+    } catch (error) {
+      const badRequest = error instanceof CoverCacheError &&
+        ['invalid_cover_url', 'unsupported_cover_host'].includes(error.code);
+      return reply.code(badRequest ? 400 : 502).send({
+        error: error?.code || 'cover_cache_failed',
+        message: error?.message || String(error),
+      });
+    }
+  });
 
   // ---- 采集健康（驱动「攒取中」）----
   fastify.get('/api/health', async () => {

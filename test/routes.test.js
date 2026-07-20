@@ -84,3 +84,13 @@ test('daily-top-songs 包含锚点当天并返回去重歌曲与全天总次数'
   await app.close();
   db.close();
 });
+
+test('cover 端点拒绝代理非网易云图片域名', async () => {
+  const db = freshDb();
+  const app = await appWithDb(db);
+  const response = await app.inject('/api/cover?url=https%3A%2F%2Fexample.test%2Fcover.jpg');
+  assert.equal(response.statusCode, 400);
+  assert.equal(response.json().error, 'unsupported_cover_host');
+  await app.close();
+  db.close();
+});

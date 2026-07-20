@@ -15,12 +15,21 @@ if (fs.existsSync(envFile)) {
   }
 }
 
+const dbPath = process.env.DB_PATH || path.join(root, 'data', 'music.db');
+
 export const config = {
   // 你的网易云 uid（听歌排行需在网易云客户端设为「公开」）。必填。
   uid: process.env.NETEASE_UID || '',
 
-  dbPath: process.env.DB_PATH || path.join(root, 'data', 'music.db'),
+  dbPath,
   schemaPath: path.join(root, 'src', 'db', 'schema.sql'),
+
+  // 网易云封面落盘缓存。默认与数据库放在同一持久化目录，容器重建后仍可复用。
+  coverCache: {
+    dir: process.env.COVER_CACHE_DIR || path.join(path.dirname(dbPath), 'cover-cache'),
+    ttlMs: Math.max(Number(process.env.COVER_CACHE_TTL_MS || 30 * 24 * 60 * 60 * 1000), 60 * 60 * 1000),
+    maxBytes: Math.max(Number(process.env.COVER_CACHE_MAX_BYTES || 3 * 1024 * 1024), 64 * 1024),
+  },
 
   // 统计时区；趋势图按周分桶时仍采用 ISO 周。
   tz: process.env.TZ_NAME || 'Asia/Shanghai',

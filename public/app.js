@@ -10,6 +10,8 @@ const state = {
 
 let latestHealth = { have_days: 0 };
 let overviewRequestId = 0;
+let rankingRequestId = 0;
+let trendRequestId = 0;
 
 const PLAYLIST_PAGE_SIZE = 10; // 歌单列表每页条数
 const TRACK_PAGE_SIZE = 10; // 曲目每页条数
@@ -67,6 +69,11 @@ function formatPlayTime(value) {
   const date = new Date(timestamp > 10_000_000_000 ? timestamp : timestamp * 1000);
   if (Number.isNaN(date.getTime())) return '未知时间';
   return date.toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+}
+
+function cachedCoverUrl(value) {
+  if (typeof value !== 'string' || !/^https?:\/\//i.test(value)) return '';
+  return `/api/cover?url=${encodeURIComponent(value)}`;
 }
 
 async function getJson(path, params = {}) {
@@ -168,8 +175,9 @@ function renderMosaic(payload = {}) {
         return tile;
       }
       const pic = entry.song?.album?.picUrl || entry.song?.picUrl;
-      if (pic) {
-        tile.style.backgroundImage = `linear-gradient(135deg, rgba(255,255,255,.22), rgba(255,255,255,0)), url("${pic}")`;
+      const cachedPic = cachedCoverUrl(pic);
+      if (cachedPic) {
+        tile.style.backgroundImage = `linear-gradient(135deg, rgba(255,255,255,.22), rgba(255,255,255,0)), url("${cachedPic}")`;
       }
       tile.title = `${entry.song?.name || '未命名'} · ${formatNumber(entry.plays)} 次`;
       return tile;
@@ -295,7 +303,8 @@ function makeSongRow(item, { valueText = '', metaText = '' } = {}) {
   const art = document.createElement('span');
   art.className = 'song-row__art';
   const pic = item.song?.album?.picUrl || item.song?.picUrl;
-  if (pic) art.style.backgroundImage = `url("${pic}")`;
+  const cachedPic = cachedCoverUrl(pic);
+  if (cachedPic) art.style.backgroundImage = `url("${cachedPic}")`;
 
   const main = document.createElement('div');
   main.className = 'song-row__main';
@@ -378,7 +387,8 @@ function renderPlaylists(payload) {
 
     const cover = document.createElement('span');
     cover.className = 'playlist-row__cover';
-    if (item.coverImgUrl) cover.style.backgroundImage = `url("${item.coverImgUrl}")`;
+    const cachedPic = cachedCoverUrl(item.coverImgUrl);
+    if (cachedPic) cover.style.backgroundImage = `url("${cachedPic}")`;
 
     const main = document.createElement('span');
     main.className = 'playlist-row__main';
@@ -437,9 +447,25 @@ function renderTrend(payload, health) {
     const bar = document.createElement('span');
     bar.className = 'trend-bar';
     bar.classList.toggle('is-gap', Boolean(point.has_gap));
-    bar.style.setProperty('--bar-height', `${Math.max(8, Math.round(((point.plays || 0) / max) * 280))}px`);
-    bar.dataset.label = shortBucket(point.bucket);
     bar.title = `${point.bucket}: ${formatNumber(point.plays)} 次`;
+    bar.setAttribute('aria-label', bar.title);
+
+    const label = document.createElement('span');
+    label.className = 'trend-bar__label';
+    label.textContent = shortBucket(point.bucket);
+
+    const track = document.createElement('span');
+    track.className = 'trend-bar__track';
+    const fill = document.createElement('span');
+    fill.className = 'trend-bar__fill';
+    const width = point.plays ? Math.max(2, Math.round((point.plays / max) * 100)) : 0;
+    fill.style.setProperty('--bar-width', `${width}%`);
+    track.append(fill);
+
+    const value = document.createElement('span');
+    value.className = 'trend-bar__value';
+    value.textContent = formatNumber(point.plays || 0);
+    bar.append(label, track, value);
     return bar;
   });
   nodes.trendChart.replaceChildren(...bars);
@@ -451,6 +477,44 @@ function shortBucket(bucket) {
   if (/^\d{4}-\d{2}-\d{2}$/.test(bucket)) return bucket.slice(5);
   if (/^\d{4}-\d{2}$/.test(bucket)) return bucket.slice(2);
   return bucket;
+}
+
+// 排行维度切换只查询本地聚合接口，不重新请求最近播放、今日足迹或页面其他模块。
+async function loadRanking() {
+  setActiveButtons();
+  const requestId = ++rankingRequestId;
+  nodes.rankingList.setAttribute('aria-busy', 'true');
+  const ranking = await getJson('/api/ranking', {
+    dimension: state.dimension,
+    metric: 'plays',
+    period: state.rankingPeriod,
+    limit: 10,
+  }).catch((error) => ({ error: error.message }));
+  if (requestId !== rankingRequestId) return;
+  if (ranking.error) {
+    nodes.rankingList.replaceChildren(emptyState('排行不可用', ranking.error));
+  } else {
+    renderRanking(ranking, latestHealth);
+  }
+  nodes.rankingList.removeAttribute('aria-busy');
+}
+
+// 趋势粒度切换只查询本地聚合接口，不触发任何网易云实时接口。
+async function loadTrend() {
+  setActiveButtons();
+  const requestId = ++trendRequestId;
+  nodes.trendChart.setAttribute('aria-busy', 'true');
+  const trend = await getJson('/api/trend', {
+    granularity: state.granularity,
+    last: state.granularity === 'day' ? 30 : 12,
+  }).catch((error) => ({ error: error.message }));
+  if (requestId !== trendRequestId) return;
+  if (trend.error) {
+    nodes.trendChart.replaceChildren(emptyState('趋势不可用', trend.error));
+  } else {
+    renderTrend(trend, latestHealth);
+  }
+  nodes.trendChart.removeAttribute('aria-busy');
 }
 
 // 通用「上一页/下一页」翻页条。total<=pageSize 时隐藏（只有一页无需翻）。
@@ -524,6 +588,8 @@ async function loadPlaylistTracks() {
 
 async function loadDashboard() {
   setActiveButtons();
+  const dashboardRankingRequestId = ++rankingRequestId;
+  const dashboardTrendRequestId = ++trendRequestId;
   nodes.refreshButton.disabled = true;
   nodes.refreshButton.setAttribute('aria-busy', 'true');
 
@@ -542,8 +608,8 @@ async function loadDashboard() {
     ]);
 
     renderOverview(overview, health);
-    renderRanking(ranking, health);
-    renderTrend(trend, health);
+    if (dashboardRankingRequestId === rankingRequestId) renderRanking(ranking, health);
+    if (dashboardTrendRequestId === trendRequestId) renderTrend(trend, health);
     renderRecent(recent);
     renderToday(today);
     renderMosaic(dailyTops);
@@ -575,14 +641,14 @@ document.addEventListener('click', (event) => {
   const dimension = event.target.closest('[data-dimension]');
   if (dimension) {
     state.dimension = dimension.dataset.dimension;
-    loadDashboard();
+    loadRanking();
     return;
   }
 
   const granularity = event.target.closest('[data-granularity]');
   if (granularity) {
     state.granularity = granularity.dataset.granularity;
-    loadDashboard();
+    loadTrend();
     return;
   }
 
