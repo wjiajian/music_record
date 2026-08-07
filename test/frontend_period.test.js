@@ -32,18 +32,20 @@ test('排行维度切换只请求本地 ranking 接口', () => {
   assert.doesNotMatch(loader, /record\/recent|listen\/data\/today|\/api\/trend|loadDashboard/);
 });
 
-test('趋势粒度切换只请求本地 trend 接口', () => {
+test('趋势粒度切换同步刷新对应周期排行', () => {
   const handlerStart = source.indexOf("const granularity = event.target.closest('[data-granularity]')");
   const handlerEnd = source.indexOf("const pager = event.target.closest('[data-pager]')");
   const handler = source.slice(handlerStart, handlerEnd);
+  assert.match(handler, /state\.rankingPeriod = state\.granularity/);
   assert.match(handler, /loadTrend\(\)/);
+  assert.match(handler, /loadRanking\(\)/);
   assert.doesNotMatch(handler, /loadDashboard\(\)/);
 
   const loaderStart = source.indexOf('async function loadTrend()');
   const loaderEnd = source.indexOf('function renderPager', loaderStart);
   const loader = source.slice(loaderStart, loaderEnd);
   assert.match(loader, /\/api\/trend/);
-  assert.doesNotMatch(loader, /record\/recent|listen\/data\/today|\/api\/ranking|loadDashboard/);
+  assert.doesNotMatch(loader, /record\/recent|listen\/data\/today|loadDashboard/);
 });
 
 test('趋势图按时间周期纵向排列并渲染横向柱与播放次数', () => {

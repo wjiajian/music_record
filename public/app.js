@@ -479,7 +479,7 @@ function shortBucket(bucket) {
   return bucket;
 }
 
-// 排行维度切换只查询本地聚合接口，不重新请求最近播放、今日足迹或页面其他模块。
+// 排行筛选切换只查询本地聚合接口，不重新请求最近播放、今日足迹或页面其他模块。
 async function loadRanking() {
   setActiveButtons();
   const requestId = ++rankingRequestId;
@@ -648,7 +648,9 @@ document.addEventListener('click', (event) => {
   const granularity = event.target.closest('[data-granularity]');
   if (granularity) {
     state.granularity = granularity.dataset.granularity;
+    state.rankingPeriod = state.granularity;
     loadTrend();
+    loadRanking();
     return;
   }
 
