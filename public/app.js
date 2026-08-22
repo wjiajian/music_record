@@ -23,6 +23,7 @@ const percentFormat = new Intl.NumberFormat('zh-CN', { style: 'percent', maximum
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
 const nodes = {
+  topbar: document.querySelector('.topbar'),
   dateWatermark: document.querySelector('#dateWatermark'),
   chapterWatermark: document.querySelector('#chapterWatermark'),
   heroSubtitle: document.querySelector('#heroSubtitle'),
@@ -40,9 +41,7 @@ const nodes = {
   trendRange: document.querySelector('#trendRange'),
   rankingList: document.querySelector('#rankingList'),
   recentList: document.querySelector('#recentList'),
-  recentFreshness: document.querySelector('#recentFreshness'),
   todayList: document.querySelector('#todayList'),
-  todayFreshness: document.querySelector('#todayFreshness'),
   playlistList: document.querySelector('#playlistList'),
   playlistSelect: document.querySelector('#playlistSelect'),
   playlistCount: document.querySelector('#playlistCount'),
@@ -56,14 +55,50 @@ const nodes = {
   hourlyMeta: document.querySelector('#hourlyMeta'),
   mosaic: document.querySelector('#mosaic'),
   mosaicSummary: document.querySelector('#mosaicSummary'),
-  diagnosticService: document.querySelector('#diagnosticService'),
-  diagnosticServiceDetail: document.querySelector('#diagnosticServiceDetail'),
-  diagnosticSnapshot: document.querySelector('#diagnosticSnapshot'),
-  diagnosticPoll: document.querySelector('#diagnosticPoll'),
-  diagnosticQuality: document.querySelector('#diagnosticQuality'),
-  diagnosticGap: document.querySelector('#diagnosticGap'),
   footerTimezone: document.querySelector('#footerTimezone'),
 };
+
+const TOPBAR_REVEAL_ZONE = 24;
+const TOPBAR_HIDE_AFTER = 80;
+const TOPBAR_SCROLL_TRIGGER = 18;
+let lastTopbarScrollY = Math.max(0, window.scrollY);
+let topbarScrollDistance = 0;
+let topbarScrollScheduled = false;
+
+function revealTopbar() {
+  nodes.topbar.classList.remove('is-hidden');
+}
+
+function updateTopbarOnScroll() {
+  const currentY = Math.max(0, window.scrollY);
+  const delta = currentY - lastTopbarScrollY;
+
+  if (delta && Math.sign(delta) !== Math.sign(topbarScrollDistance)) topbarScrollDistance = 0;
+  topbarScrollDistance += delta;
+
+  if (currentY <= TOPBAR_HIDE_AFTER || topbarScrollDistance <= -TOPBAR_SCROLL_TRIGGER || nodes.topbar.matches(':focus-within')) {
+    revealTopbar();
+    topbarScrollDistance = 0;
+  } else if (topbarScrollDistance >= TOPBAR_SCROLL_TRIGGER) {
+    nodes.topbar.classList.add('is-hidden');
+    topbarScrollDistance = 0;
+  }
+
+  lastTopbarScrollY = currentY;
+  topbarScrollScheduled = false;
+}
+
+function scheduleTopbarUpdate() {
+  if (topbarScrollScheduled) return;
+  topbarScrollScheduled = true;
+  window.requestAnimationFrame(updateTopbarOnScroll);
+}
+
+window.addEventListener('scroll', scheduleTopbarUpdate, { passive: true });
+window.addEventListener('pointermove', (event) => {
+  if (event.clientY <= TOPBAR_REVEAL_ZONE) revealTopbar();
+}, { passive: true });
+nodes.topbar.addEventListener('focusin', revealTopbar);
 
 function icon(name, className = '') {
   const svg = document.createElementNS(SVG_NS, 'svg');
@@ -337,23 +372,6 @@ function renderHealth(health) {
   nodes.heroSubtitle.textContent = health?.last_snapshot
     ? `账本更新至 ${health.last_snapshot}；最近事件于 ${health.last_recent_poll_at ? formatPlayTime(Date.parse(health.last_recent_poll_at)) : '尚未捕获'} 观察。`
     : '还没有可用快照；页面会保留数据不足状态，不把未知解释为零。';
-  nodes.recentFreshness.textContent = health?.last_recent_poll_at
-    ? `更新于 ${formatPlayTime(Date.parse(health.last_recent_poll_at))}`
-    : '尚未捕获事件';
-  nodes.todayFreshness.textContent = health?.last_today_listen_at
-    ? `更新于 ${formatPlayTime(Date.parse(health.last_today_listen_at))}`
-    : '当前视图未更新';
-
-  nodes.diagnosticService.textContent = warning ? '采集状态需注意' : hasService ? '只读服务正常' : '等待首批数据';
-  nodes.diagnosticServiceDetail.textContent = health?.counter_last_error
-    ? `最近错误：${health.counter_last_error}`
-    : 'API 读取与页面渲染已连通。';
-  nodes.diagnosticSnapshot.textContent = health?.last_snapshot || '没有快照';
-  nodes.diagnosticPoll.textContent = health?.last_recent_poll_at
-    ? `最近轮询 ${health.last_recent_poll_at}`
-    : '尚无成功轮询';
-  const gaps = (health?.gap_dates?.length || 0) + (health?.counter_gap_count || 0);
-  nodes.diagnosticGap.textContent = gaps ? `已识别 ${formatNumber(gaps)} 处日级或轮询缺口` : '未识别到已记录的采集缺口';
 }
 
 function renderOverview(overview, health) {
@@ -364,7 +382,6 @@ function renderOverview(overview, health) {
     setMetricValue(nodes.metricDays, formatNumber(health.have_days));
     nodes.metricRange.textContent = '统计范围尚未形成';
     nodes.metricPlaysHint.textContent = overview?.error ? `读取失败：${overview.error}` : getInsufficientText(overview, health.have_days);
-    nodes.diagnosticQuality.textContent = overview?.error ? '读取失败' : '数据不足';
     return;
   }
 
@@ -376,7 +393,6 @@ function renderOverview(overview, health) {
   setMetricValue(nodes.metricDays, `${prefix}${formatNumber(overview.totals.days_tracked)}`);
   nodes.metricRange.textContent = formatRange(overview.range);
   nodes.metricPlaysHint.textContent = lowerBound ? '下界统计 · 范围内存在未完整观察的数据' : '精确统计 · 当前范围观察完整';
-  nodes.diagnosticQuality.textContent = lowerBound ? '下界统计' : '精确统计';
 }
 
 function rankingPic(item) {
@@ -565,7 +581,7 @@ function renderTrend(payload, health) {
   nodes.trendRange.textContent = formatRange(payload.meta?.range);
   const width = 900;
   const height = 300;
-  const left = 42;
+  const left = 54;
   const right = 18;
   const top = 18;
   const baseline = 248;
@@ -596,7 +612,7 @@ function renderTrend(payload, health) {
   for (let gridIndex = 0; gridIndex <= 4; gridIndex += 1) {
     const y = top + ((baseline - top) / 4) * gridIndex;
     svg.append(makeSvgElement('line', { x1: left, y1: y, x2: width - right, y2: y, class: 'trend-grid-line' }));
-    const label = makeSvgElement('text', { x: left - 8, y: y + 3, 'text-anchor': 'end', class: 'trend-axis-label' });
+    const label = makeSvgElement('text', { x: left - 10, y, 'text-anchor': 'end', 'dominant-baseline': 'middle', class: 'trend-axis-label' });
     label.textContent = formatNumber(Math.round(max * (1 - gridIndex / 4)));
     svg.append(label);
   }
@@ -634,7 +650,7 @@ function renderTrend(payload, health) {
       svg.append(circle);
     }
     if (index % labelStride === 0 || index === points.length - 1) {
-      const label = makeSvgElement('text', { x: point.x, y: baseline + 24, 'text-anchor': 'middle', class: 'trend-axis-label' });
+      const label = makeSvgElement('text', { x: point.x, y: baseline + 27, 'text-anchor': 'middle', class: 'trend-axis-label' });
       label.textContent = shortBucket(point.bucket);
       svg.append(label);
     }
@@ -939,8 +955,6 @@ async function loadDashboard() {
     nodes.serviceStatus.dataset.state = 'error';
     nodes.serviceStatusText.textContent = '服务不可用';
     nodes.heroSubtitle.textContent = `读取失败：${error.message}`;
-    nodes.diagnosticService.textContent = '服务连接失败';
-    nodes.diagnosticServiceDetail.textContent = error.message;
     const failure = () => emptyState('读取失败', error.message, { kind: 'error', iconName: 'triangle-alert' });
     nodes.rankingList.replaceChildren(failure());
     nodes.trendChart.replaceChildren(failure());

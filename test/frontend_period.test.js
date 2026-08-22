@@ -68,6 +68,41 @@ test('趋势使用直线分段面积图，在缺口中断并标记当前桶', ()
   assert.doesNotMatch(renderer, /bezier|quadraticCurve|cubic/i);
 });
 
+test('顶部栏向下滚动自动隐藏，向上滚动或靠近顶部时恢复', () => {
+  assert.match(source, /function updateTopbarOnScroll/);
+  assert.match(source, /window\.addEventListener\('scroll', scheduleTopbarUpdate/);
+  assert.match(source, /event\.clientY <= TOPBAR_REVEAL_ZONE/);
+  assert.match(source, /nodes\.topbar\.classList\.add\('is-hidden'\)/);
+
+  const hiddenRule = css.slice(css.indexOf('.topbar.is-hidden'), css.indexOf('.topbar__inner'));
+  assert.match(hiddenRule, /translateY/);
+  assert.match(hiddenRule, /pointer-events: none/);
+
+  const innerRule = css.slice(css.indexOf('.topbar__inner'), css.indexOf('.brand {'));
+  assert.match(innerRule, /border-radius: 12px/);
+});
+
+test('最近播放与今日足迹共用圆形封面，且不显示更新时间', () => {
+  assert.doesNotMatch(html, /recentFreshness|todayFreshness|crystal-list/);
+  assert.doesNotMatch(source, /recentFreshness|todayFreshness/);
+  assert.match(css, /\.song-row__art,[\s\S]*?border-radius: 50%/);
+  assert.doesNotMatch(css, /\.crystal-list/);
+});
+
+test('趋势横纵坐标使用更大、更轻的正文数字', () => {
+  const axisRule = css.slice(css.indexOf('.trend-axis-label'), css.indexOf('.trend-current-line'));
+  assert.match(axisRule, /font-family: var\(--body\)/);
+  assert.match(axisRule, /font-size: 12\.5px/);
+  assert.match(axisRule, /font-weight: 400/);
+  assert.match(source, /'dominant-baseline': 'middle'/);
+});
+
+test('封面区移除中文标题，并彻底移除系统诊断区', () => {
+  assert.doesNotMatch(html, /七日封面账本|系统诊断账本|class="diagnostics"|icon-cpu/);
+  assert.doesNotMatch(source, /diagnosticService|diagnosticQuality|diagnosticGap/);
+  assert.doesNotMatch(css, /\.diagnostics/);
+});
+
 test('封面统一走本站缓存、渐进加载与局部环境色增强', () => {
   assert.match(source, /function cachedCoverUrl/);
   assert.match(source, /function createCoverMedia/);

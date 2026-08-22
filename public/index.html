@@ -31,7 +31,6 @@
       <symbol id="icon-compass" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="m16.2 7.8-2.1 6.3-6.3 2.1 2.1-6.3 6.3-2.1Z"></path></symbol>
       <symbol id="icon-arrow-up-right" viewBox="0 0 24 24"><path d="M7 17 17 7M7 7h10v10"></path></symbol>
       <symbol id="icon-shield-check" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V5l8-3 8 3v8Z"></path><path d="m9 12 2 2 4-4"></path></symbol>
-      <symbol id="icon-cpu" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"></rect><rect x="9" y="9" width="6" height="6"></rect><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"></path></symbol>
       <symbol id="icon-chevron-left" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"></path></symbol>
       <symbol id="icon-chevron-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"></path></symbol>
       <symbol id="icon-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5M3 12c0 1.7 4 3 9 3s9-1.3 9-3"></path></symbol>
@@ -68,9 +67,9 @@
           </div>
         </div>
 
-        <aside class="cover-ledger" aria-labelledby="coverLedgerTitle">
+        <aside class="cover-ledger" aria-label="最近七日封面记录">
           <div class="ledger-head">
-            <div><p class="eyebrow"><span>01</span> SEVEN DAY PRESSING</p><h2 id="coverLedgerTitle">七日封面账本</h2></div>
+            <div><p class="eyebrow"><span>01</span> SEVEN DAY PRESSING</p></div>
             <div class="ledger-coordinate"><span>最后快照</span><strong id="lastSnapshot">--</strong></div>
           </div>
           <div class="mosaic" id="mosaic" aria-label="最近七天每日听过的歌曲封面"></div>
@@ -92,12 +91,12 @@
         <div class="section-heading"><p class="eyebrow"><span>03</span> LIVE OBSERVATION</p><h2 id="liveTitle">此刻留下的声音</h2><p>近期事件与今日视图来自不同观察口径，分别呈现，不互相推算。</p></div>
         <div class="split-ledger">
           <article class="stream-column">
-            <div class="column-head"><div><svg aria-hidden="true"><use href="#icon-radio"></use></svg><h3>最近播放</h3></div><span id="recentFreshness">等待更新</span></div>
+            <div class="column-head"><div><svg aria-hidden="true"><use href="#icon-radio"></use></svg><h3>最近播放</h3></div></div>
             <div class="compact-list" id="recentList" aria-live="polite"></div>
           </article>
           <article class="stream-column stream-column--today">
-            <div class="column-head"><div><svg aria-hidden="true"><use href="#icon-activity"></use></svg><h3>今日足迹</h3></div><span id="todayFreshness">当前视图</span></div>
-            <div class="compact-list crystal-list" id="todayList" aria-live="polite"></div>
+            <div class="column-head"><div><svg aria-hidden="true"><use href="#icon-activity"></use></svg><h3>今日足迹</h3></div></div>
+            <div class="compact-list" id="todayList" aria-live="polite"></div>
           </article>
         </div>
       </section>
@@ -138,15 +137,6 @@
         </div>
       </section>
 
-      <details class="diagnostics" id="diagnostics">
-        <summary><span><svg aria-hidden="true"><use href="#icon-cpu"></use></svg><strong>系统诊断账本</strong><small>路由、来源、快照与采集缺口</small></span><svg class="summary-chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg></summary>
-        <div class="diagnostics-grid">
-          <section><span class="diagnostic-label">SERVICE</span><h3 id="diagnosticService">读取中</h3><p id="diagnosticServiceDetail">等待服务状态。</p></section>
-          <section><span class="diagnostic-label">SNAPSHOT</span><h3 id="diagnosticSnapshot">--</h3><p id="diagnosticPoll">最近轮询 --</p></section>
-          <section><span class="diagnostic-label">COLLECTION</span><h3 id="diagnosticQuality">尚未判定</h3><p id="diagnosticGap">采集缺口 --</p></section>
-          <section><span class="diagnostic-label">LOCAL API</span><h3>只读数据来源</h3><p><code>/api/overview</code> <code>/api/ranking</code> <code>/api/trend</code> <code>/api/hourly-activity</code> <code>/api/daily-top-songs</code> <code>/api/playlists</code></p></section>
-        </div>
-      </details>
     </main>
 
     <footer class="page-footer"><span>SONIC CRYSTAL / CHRONO-LEDGER</span><span id="footerTimezone">LOCAL TIME</span></footer>
