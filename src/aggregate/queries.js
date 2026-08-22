@@ -298,6 +298,19 @@ export function dailyTopSongs(db, start, end, limitPerDay = 24) {
   }));
 }
 
+// ---- 小时活跃度（只读取真实捕获的最近播放事件）---------------------
+
+export function recentPlayEventsInRange(db, start, end) {
+  return db
+    .prepare(
+      `SELECT song_id, play_time, play_date
+       FROM recent_play_event
+       WHERE play_date BETWEEN ? AND ?
+       ORDER BY play_time`
+    )
+    .all(start, end);
+}
+
 // ---- 概览 / 健康 ---------------------------------------------------
 
 export function totals(db, start, end) {

@@ -3,6 +3,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import Fastify from 'fastify';
 import { DatabaseSync } from 'node:sqlite';
+import { DateTime } from 'luxon';
 import routes from '../src/api/routes.js';
 
 function freshDb() {
@@ -80,6 +81,59 @@ test('daily-top-songs 包含锚点当天并返回去重歌曲与全天总次数'
   assert.equal(body.items[0].date, '2020-07-20');
   assert.equal(body.items[0].plays, 3);
   assert.equal(body.items[0].songs.length, 1);
+
+  await app.close();
+  db.close();
+});
+
+test('hourly-activity 固定返回 24 桶，只按本地小时统计真实事件并披露未定位补量', async () => {
+  const db = freshDb();
+  seed(db);
+  db.prepare(
+    'INSERT INTO daily_play(play_date,song_id,plays,span_days,is_estimated,source) VALUES(?,1,?,1,0,?)'
+  ).run('2020-07-19', 4, 'all');
+
+  const insertEvent = db.prepare(
+    `INSERT INTO recent_play_event(song_id,play_time,play_date,source_type,first_seen_at,last_seen_at)
+     VALUES(?,?,?,?,?,?)`
+  );
+  for (const [iso, playDate] of [
+    ['2020-07-17T17:10:00Z', '2020-07-18'],
+    ['2020-07-18T16:30:00Z', '2020-07-19'],
+    ['2020-07-19T04:00:00Z', '2020-07-19'],
+    ['2020-07-19T04:05:00Z', '2020-07-19'],
+  ]) {
+    insertEvent.run(1, Date.parse(iso), playDate, 'SONG', iso, iso);
+  }
+
+  const app = await appWithDb(db);
+  const response = await app.inject('/api/hourly-activity?from=2020-07-18&to=2020-07-19');
+  assert.equal(response.statusCode, 200);
+  const body = response.json();
+  assert.equal(body.buckets.length, 24);
+  assert.deepEqual(body.meta.range, { start: '2020-07-18', end: '2020-07-19' });
+  assert.equal(body.meta.timezone, 'Asia/Shanghai');
+  assert.equal(body.meta.located_plays, 4);
+  assert.equal(body.meta.ledger_plays, 4);
+  // 7 月 18 日多捕获的一次事件不能抵消 7 月 19 日无法定位到小时的一次账本补量。
+  assert.equal(body.meta.unlocated_plays, 1);
+  assert.equal(body.meta.lower_bound, true);
+  assert.deepEqual(body.buckets[0], { hour: 0, plays: 1, distinct_songs: 1, share: 0.25 });
+  assert.deepEqual(body.buckets[1], { hour: 1, plays: 1, distinct_songs: 1, share: 0.25 });
+  assert.deepEqual(body.buckets[12], { hour: 12, plays: 2, distinct_songs: 1, share: 0.5 });
+  assert.equal(body.buckets[23].plays, 0);
+
+  const future = await app.inject('/api/hourly-activity?to=2999-12-31');
+  assert.equal(future.statusCode, 200);
+  assert.equal(
+    future.json().meta.range.end,
+    DateTime.now().setZone('Asia/Shanghai').minus({ days: 1 }).toISODate()
+  );
+  assert.equal(future.json().meta.excludes_today, true);
+
+  const invalid = await app.inject('/api/hourly-activity?from=not-a-date');
+  assert.equal(invalid.statusCode, 400);
+  assert.equal(invalid.json().error, 'invalid_hourly_activity_range');
 
   await app.close();
   db.close();

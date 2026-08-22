@@ -120,6 +120,8 @@ export default async function routes(fastify) {
       gap_dates: gapDates(dates),
       last_recent_poll_at: counter.last_success_at,
       counter_complete_from: counter.complete_from,
+      counter_last_error: counter.last_error,
+      counter_gap_count: Q.counterPollGaps(db).length,
       counter_stale: counterStale,
       can_day: Boolean(counter.last_success_at) && !counterStale,
       can_week: completeDays >= 7,
@@ -228,17 +230,22 @@ export default async function routes(fastify) {
 
     const daily = Q.dailyTotals(db, from, to, filter);
     const gaps = gapDates(dates);
+    const today = nowLocalDate();
     const series = buckets(granularity, from, to).map((b) => {
       const inB = daily.filter((d) => d.date >= b.start && d.date <= b.end);
       const plays = inB.reduce((a, d) => a + d.plays, 0);
       const est = inB.reduce((a, d) => a + (d.est_ms || 0), 0);
+      const observedEnd = b.end < to ? b.end : to;
+      const quality = dataQuality(db, b.start, observedEnd);
       return {
         bucket: b.bucket,
         start: b.start,
         end: b.end,
         plays,
         est_minutes: Math.round(est / 60000),
-        has_gap: gaps.some((g) => g >= b.start && g <= b.end),
+        has_gap: gaps.some((g) => g >= b.start && g <= b.end) || quality.has_gap,
+        lower_bound: quality.lower_bound,
+        is_current: b.start <= today && b.end >= today,
       };
     });
 
@@ -248,10 +255,87 @@ export default async function routes(fastify) {
         granularity,
         metric,
         entity,
+        range: { start: from, end: to },
         data_quality: dataQuality(db, from, to),
         freshness: freshness(db),
       },
       series,
+    };
+  });
+
+  // ---- 最近完整自然日的 24 小时真实播放事件分布 --------------------
+  fastify.get('/api/hourly-activity', async (req, reply) => {
+    const yesterday = DateTime.now().setZone(config.tz).minus({ days: 1 }).toISODate();
+    const requestedEnd = DateTime.fromISO(req.query.to || yesterday, { zone: config.tz });
+    if (!requestedEnd.isValid) {
+      return reply.code(400).send({ error: 'invalid_hourly_activity_range' });
+    }
+    const end = requestedEnd.toISODate() > yesterday ? yesterday : requestedEnd.toISODate();
+    const days = Math.min(Math.max(Number(req.query.days || 30), 1), 365);
+    const requestedStart = req.query.from
+      ? DateTime.fromISO(req.query.from, { zone: config.tz })
+      : DateTime.fromISO(end, { zone: config.tz }).minus({ days: days - 1 });
+    const start = requestedStart.toISODate();
+
+    if (!requestedStart.isValid || !start || start > end) {
+      return reply.code(400).send({ error: 'invalid_hourly_activity_range' });
+    }
+
+    const hourBuckets = Array.from({ length: 24 }, (_, hour) => ({
+      hour,
+      plays: 0,
+      songIds: new Set(),
+    }));
+    const locatedByDate = new Map();
+    for (const event of Q.recentPlayEventsInRange(db, start, end)) {
+      const timestamp = Number(event.play_time);
+      if (!Number.isFinite(timestamp) || timestamp <= 0) continue;
+      const millis = timestamp < 10_000_000_000 ? timestamp * 1000 : timestamp;
+      const local = DateTime.fromMillis(millis, { zone: config.tz });
+      if (!local.isValid) continue;
+      const localDate = local.toISODate();
+      // play_date 是索引与初筛依据；再按时间戳复核，避免旧数据时区迁移误差。
+      if (localDate < start || localDate > end) continue;
+      hourBuckets[local.hour].plays += 1;
+      hourBuckets[local.hour].songIds.add(event.song_id);
+      locatedByDate.set(localDate, (locatedByDate.get(localDate) || 0) + 1);
+    }
+
+    const locatedPlays = hourBuckets.reduce((sum, bucket) => sum + bucket.plays, 0);
+    // 按天求差，避免某天额外捕获的事件抵消另一天无法定位到小时的账本补量。
+    const daily = Q.dailyTotals(db, start, end);
+    const ledgerPlays = daily.reduce((sum, day) => sum + (day.plays || 0), 0);
+    const unlocatedPlays = daily.reduce(
+      (sum, day) => sum + Math.max(0, (day.plays || 0) - (locatedByDate.get(day.date) || 0)),
+      0
+    );
+    const quality = dataQuality(db, start, end);
+    const collectionGaps = Q.counterPollGaps(db).filter((gap) => {
+      const gapStart = localDateFromISO(gap.started_at);
+      const gapEnd = localDateFromISO(gap.ended_at) || nowLocalDate();
+      return gapStart && gapStart <= end && gapEnd >= start;
+    });
+    const lowerBound = quality.lower_bound || unlocatedPlays > 0;
+
+    return {
+      meta: {
+        range: { start, end },
+        days: Math.round(DateTime.fromISO(end).diff(DateTime.fromISO(start), 'days').days) + 1,
+        timezone: config.tz,
+        excludes_today: true,
+        located_plays: locatedPlays,
+        ledger_plays: ledgerPlays,
+        unlocated_plays: unlocatedPlays,
+        collection_gaps: collectionGaps,
+        lower_bound: lowerBound,
+        data_quality: { ...quality, lower_bound: lowerBound },
+      },
+      buckets: hourBuckets.map((bucket) => ({
+        hour: bucket.hour,
+        plays: bucket.plays,
+        distinct_songs: bucket.songIds.size,
+        share: locatedPlays ? Math.round((bucket.plays / locatedPlays) * 10_000) / 10_000 : 0,
+      })),
     };
   });
 
@@ -293,7 +377,7 @@ export default async function routes(fastify) {
         date,
         missing: quality.has_gap || quality.stale,
         lower_bound: quality.lower_bound,
-        reason: quality.has_gap || quality.stale ? 'gap' : 'empty',
+        reason: quality.has_gap || quality.stale ? 'gap' : quality.historical ? 'insufficient' : 'empty',
         plays: 0,
         distinct_songs: 0,
         est_minutes: 0,

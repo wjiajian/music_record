@@ -3,171 +3,152 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>music-record</title>
+    <meta name="theme-color" content="#faf9f7">
+    <meta name="description" content="Music Record 个人听歌账本：按本地时间观察播放、排行、趋势与歌单。">
+    <title>声波时间账本</title>
     <link rel="icon" type="image/png" href="/favicon.png">
+    <link rel="apple-touch-icon" href="/logo.png">
     <link rel="stylesheet" href="/styles.css">
     <script type="module" src="/app.js"></script>
   </head>
   <body>
+    <!-- Lucide 0.468.0：仅保留本站使用的图标，内联且不依赖运行时。 -->
+    <svg class="svg-sprite" data-lucide-version="0.468.0" aria-hidden="true">
+      <symbol id="icon-disc3" viewBox="0 0 24 24">
+        <circle cx="12" cy="12" r="10"></circle><circle cx="12" cy="12" r="2"></circle><path d="M12 2v4M12 18v4M2 12h4M18 12h4"></path>
+      </symbol>
+      <symbol id="icon-rotate-cw" viewBox="0 0 24 24">
+        <path d="M21 12a9 9 0 1 1-2.64-6.36L21 8"></path><path d="M21 3v5h-5"></path>
+      </symbol>
+      <symbol id="icon-radio" viewBox="0 0 24 24">
+        <path d="M4.9 19.1a10 10 0 0 1 0-14.2M7.8 16.2a6 6 0 0 1 0-8.4M19.1 4.9a10 10 0 0 1 0 14.2M16.2 7.8a6 6 0 0 1 0 8.4"></path><circle cx="12" cy="12" r="2"></circle>
+      </symbol>
+      <symbol id="icon-activity" viewBox="0 0 24 24"><path d="M3 12h4l3-9 4 18 3-9h4"></path></symbol>
+      <symbol id="icon-music" viewBox="0 0 24 24"><path d="M9 18V5l12-2v13"></path><circle cx="6" cy="18" r="3"></circle><circle cx="18" cy="16" r="3"></circle></symbol>
+      <symbol id="icon-mic2" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="11" rx="3"></rect><path d="M5 10a7 7 0 0 0 14 0M12 17v5M8 22h8"></path></symbol>
+      <symbol id="icon-layers" viewBox="0 0 24 24"><path d="m12 2 9 5-9 5-9-5 9-5Z"></path><path d="m3 12 9 5 9-5M3 17l9 5 9-5"></path></symbol>
+      <symbol id="icon-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="M12 6v6l4 2"></path></symbol>
+      <symbol id="icon-compass" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"></circle><path d="m16.2 7.8-2.1 6.3-6.3 2.1 2.1-6.3 6.3-2.1Z"></path></symbol>
+      <symbol id="icon-arrow-up-right" viewBox="0 0 24 24"><path d="M7 17 17 7M7 7h10v10"></path></symbol>
+      <symbol id="icon-shield-check" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-8 9-4.5-1.5-8-4-8-9V5l8-3 8 3v8Z"></path><path d="m9 12 2 2 4-4"></path></symbol>
+      <symbol id="icon-cpu" viewBox="0 0 24 24"><rect x="4" y="4" width="16" height="16" rx="2"></rect><rect x="9" y="9" width="6" height="6"></rect><path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3"></path></symbol>
+      <symbol id="icon-chevron-left" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"></path></symbol>
+      <symbol id="icon-chevron-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"></path></symbol>
+      <symbol id="icon-database" viewBox="0 0 24 24"><ellipse cx="12" cy="5" rx="9" ry="3"></ellipse><path d="M3 5v14c0 1.7 4 3 9 3s9-1.3 9-3V5M3 12c0 1.7 4 3 9 3s9-1.3 9-3"></path></symbol>
+      <symbol id="icon-triangle-alert" viewBox="0 0 24 24"><path d="m21.7 18-8-14a2 2 0 0 0-3.4 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.7-3Z"></path><path d="M12 9v4M12 17h.01"></path></symbol>
+    </svg>
+
     <header class="topbar">
-      <div class="container topbar__inner">
-        <a class="brand" href="/" aria-label="music-record 首页">
-          <img class="brand__mark" src="/logo.png" alt="music-record logo" width="28" height="28">
-          <span>music-record</span>
+      <div class="topbar__inner">
+        <a class="brand" href="#overview" aria-label="Music Record 声波时间账本首页">
+          <span class="brand__mark-frame" aria-hidden="true"><img class="brand__mark" src="/logo.png" alt="" width="67" height="67"></span>
+          <span class="brand__type"><strong>MUSIC RECORD</strong><small>声波时间账本</small></span>
         </a>
-        <nav class="nav-links" aria-label="页面导航">
-          <a href="#live">实时</a>
-          <a href="#ranking">排行</a>
-          <a href="#trend">趋势</a>
-          <a href="#playlists">歌单</a>
-        </nav>
-        <button class="icon-button lift" id="refreshButton" type="button" aria-label="刷新数据" title="刷新数据">
-          <span aria-hidden="true">↻</span>
-        </button>
+        <nav class="nav-links" aria-label="页面导航"><a href="#live">实时</a><a href="#ranking">排行</a><a href="#trend">趋势</a><a href="#playlists">歌单</a></nav>
+        <div class="topbar__actions">
+          <span class="service-status" id="serviceStatus" data-state="loading"><svg aria-hidden="true"><use href="#icon-radio"></use></svg><span class="status-dot" aria-hidden="true"></span><span id="serviceStatusText">正在读取</span></span>
+          <button class="icon-button" id="refreshButton" type="button" aria-label="刷新全部数据" title="刷新全部数据"><svg aria-hidden="true"><use href="#icon-rotate-cw"></use></svg></button>
+        </div>
       </div>
     </header>
 
-    <main>
-      <section class="hero-shell">
-        <div class="container hero-grid">
-          <div class="hero-copy">
-            <p class="eyebrow">NETEASE LISTENING LEDGER</p>
-            <h1>听歌记录，按天结晶。</h1>
-            <p class="hero-subtitle" id="heroSubtitle">每日快照差分生成的个人听歌账本。</p>
-
-            <div class="control-row" aria-label="周期">
-              <button class="seg-button is-active" type="button" data-period="day">日</button>
-              <button class="seg-button" type="button" data-period="all">全部</button>
-              <button class="seg-button" type="button" data-period="week">周</button>
-              <button class="seg-button" type="button" data-period="month">月</button>
-              <button class="seg-button" type="button" data-period="year">年</button>
+    <main class="page-shell">
+      <section class="hero-ledger" id="overview" aria-labelledby="pageTitle">
+        <span class="hero-watermark hero-watermark--date" id="dateWatermark" aria-hidden="true">0000-00-00</span>
+        <span class="hero-watermark hero-watermark--chapter" id="chapterWatermark" aria-hidden="true">CHRONO.00</span>
+        <div class="hero-copy">
+          <p class="eyebrow"><span>00</span> CHRONO LEDGER / LOCAL TIME</p>
+          <h1 id="pageTitle">听歌记录<span>按天结晶。</span></h1>
+          <p class="hero-subtitle" id="heroSubtitle">正在读取个人听歌账本。</p>
+          <div class="window-control">
+            <span class="control-label">统计窗口</span>
+            <div class="segmented" role="group" aria-label="统计窗口；同时控制概览与排行">
+              <button class="seg-button is-active" type="button" data-window="day" aria-pressed="true">日</button><button class="seg-button" type="button" data-window="week" aria-pressed="false">周</button><button class="seg-button" type="button" data-window="month" aria-pressed="false">月</button><button class="seg-button" type="button" data-window="year" aria-pressed="false">年</button><button class="seg-button" type="button" data-window="all" aria-pressed="false">全部</button>
             </div>
           </div>
+        </div>
 
-          <aside class="hero-panel" aria-label="采集状态">
-            <div class="mosaic" id="mosaic" aria-label="最近七天每日听过的不同歌曲"></div>
-            <div class="health-card">
-              <div>
-                <p class="mono-label">LAST SNAPSHOT</p>
-                <strong id="lastSnapshot">--</strong>
+        <aside class="cover-ledger" aria-labelledby="coverLedgerTitle">
+          <div class="ledger-head">
+            <div><p class="eyebrow"><span>01</span> SEVEN DAY PRESSING</p><h2 id="coverLedgerTitle">七日封面账本</h2></div>
+            <div class="ledger-coordinate"><span>最后快照</span><strong id="lastSnapshot">--</strong></div>
+          </div>
+          <div class="mosaic" id="mosaic" aria-label="最近七天每日听过的歌曲封面"></div>
+          <p class="ledger-caption" id="mosaicSummary">每天最多展示八张真实封面；空沟槽不会补造数据。</p>
+        </aside>
+      </section>
+
+      <section class="metrics-section" aria-labelledby="metricsTitle">
+        <div class="section-rail"><span>02</span><h2 id="metricsTitle">窗口概览</h2><p id="metricRange">等待统计范围</p></div>
+        <div class="metric-strip">
+          <article class="metric-item"><span class="metric-label">PLAYS / 播放</span><strong class="metric-value" id="metricPlays">--</strong><small id="metricPlaysHint">累计播放</small></article>
+          <article class="metric-item"><span class="metric-label"><svg aria-hidden="true"><use href="#icon-clock"></use></svg> HOURS / 时长</span><strong class="metric-value" id="metricHours">--</strong><small>按曲目时长估算</small></article>
+          <article class="metric-item"><span class="metric-label"><svg aria-hidden="true"><use href="#icon-music"></use></svg> SONGS / 歌曲</span><strong class="metric-value" id="metricSongs">--</strong><small>不同歌曲</small></article>
+          <article class="metric-item"><span class="metric-label"><svg aria-hidden="true"><use href="#icon-activity"></use></svg> DAYS / 天数</span><strong class="metric-value" id="metricDays">--</strong><small>有播放增量的日期</small></article>
+        </div>
+      </section>
+
+      <section class="ledger-section" id="live" aria-labelledby="liveTitle">
+        <div class="section-heading"><p class="eyebrow"><span>03</span> LIVE OBSERVATION</p><h2 id="liveTitle">此刻留下的声音</h2><p>近期事件与今日视图来自不同观察口径，分别呈现，不互相推算。</p></div>
+        <div class="split-ledger">
+          <article class="stream-column">
+            <div class="column-head"><div><svg aria-hidden="true"><use href="#icon-radio"></use></svg><h3>最近播放</h3></div><span id="recentFreshness">等待更新</span></div>
+            <div class="compact-list" id="recentList" aria-live="polite"></div>
+          </article>
+          <article class="stream-column stream-column--today">
+            <div class="column-head"><div><svg aria-hidden="true"><use href="#icon-activity"></use></svg><h3>今日足迹</h3></div><span id="todayFreshness">当前视图</span></div>
+            <div class="compact-list crystal-list" id="todayList" aria-live="polite"></div>
+          </article>
+        </div>
+      </section>
+
+      <section class="ledger-section analytics-section" aria-labelledby="analyticsTitle">
+        <div class="section-heading section-heading--inline"><div><p class="eyebrow"><span>04</span> ACOUSTIC INDEX</p><h2 id="analyticsTitle">排行与声学轨迹</h2></div><p>排行跟随统计窗口；趋势与小时分布使用各自固定口径。</p></div>
+        <div class="analytics-grid">
+          <article class="analysis-block" id="ranking">
+            <div class="block-head">
+              <div><span class="block-index">A</span><h3>窗口排行</h3><p id="rankingRange">当前统计窗口</p></div>
+              <div class="segmented segmented--icons" role="group" aria-label="排行维度">
+                <button class="seg-button is-active" type="button" data-dimension="song" aria-pressed="true"><svg aria-hidden="true"><use href="#icon-music"></use></svg>歌曲</button><button class="seg-button" type="button" data-dimension="artist" aria-pressed="false"><svg aria-hidden="true"><use href="#icon-mic2"></use></svg>歌手</button><button class="seg-button" type="button" data-dimension="album" aria-pressed="false"><svg aria-hidden="true"><use href="#icon-layers"></use></svg>专辑</button>
               </div>
-              <span class="status-pill" id="healthPill">读取中</span>
             </div>
-          </aside>
+            <div class="ranking-list" id="rankingList" aria-live="polite"></div>
+          </article>
+
+          <article class="analysis-block analysis-block--trend" id="trend">
+            <div class="block-head">
+              <div><span class="block-index">B</span><h3>播放趋势</h3><p id="trendRange">最近 30 天</p></div>
+              <div class="segmented" role="group" aria-label="趋势粒度"><button class="seg-button is-active" type="button" data-granularity="day" aria-pressed="true">日</button><button class="seg-button" type="button" data-granularity="week" aria-pressed="false">周</button><button class="seg-button" type="button" data-granularity="month" aria-pressed="false">月</button></div>
+            </div>
+            <div class="trend-chart" id="trendChart" aria-live="polite"></div>
+            <div class="heatmap-section">
+              <div class="heatmap-head"><div><p class="eyebrow">24H AUDIO HEATMAP</p><h4>完整自然日的小时活跃度</h4></div><p id="hourlyMeta">最近 30 个完整自然日，不含今天</p></div>
+              <div class="hourly-heatmap" id="hourlyHeatmap" aria-label="00 时至 23 时播放事件分布" aria-live="polite"></div>
+            </div>
+          </article>
         </div>
       </section>
 
-      <section class="container metric-grid" aria-label="概览指标">
-        <article class="metric-card">
-          <span class="mono-label">PLAYS</span>
-          <strong id="metricPlays">--</strong>
-          <small id="metricPlaysHint">累计播放</small>
-        </article>
-        <article class="metric-card">
-          <span class="mono-label">HOURS</span>
-          <strong id="metricHours">--</strong>
-          <small>估算时长</small>
-        </article>
-        <article class="metric-card">
-          <span class="mono-label">SONGS</span>
-          <strong id="metricSongs">--</strong>
-          <small>不同歌曲</small>
-        </article>
-        <article class="metric-card">
-          <span class="mono-label">DAYS</span>
-          <strong id="metricDays">--</strong>
-          <small>有差分的天数</small>
-        </article>
-      </section>
-
-      <section class="container live-grid" id="live">
-        <article class="panel panel--compact">
-          <div class="panel-head">
-            <div>
-              <p class="eyebrow">RECENT</p>
-              <h2>最近播放</h2>
-            </div>
-            <span class="source-pill">/record/recent/song</span>
-          </div>
-          <div class="compact-list" id="recentList" aria-live="polite"></div>
-        </article>
-
-        <article class="panel panel--compact">
-          <div class="panel-head">
-            <div>
-              <p class="eyebrow">TODAY</p>
-              <h2>今日足迹</h2>
-            </div>
-            <span class="source-pill">/listen/data/today/song</span>
-          </div>
-          <div class="compact-list" id="todayList" aria-live="polite"></div>
-        </article>
-      </section>
-
-      <section class="container work-grid">
-        <article class="panel" id="ranking">
-          <div class="panel-head">
-            <div>
-              <p class="eyebrow">RANKING</p>
-              <h2>周期排行</h2>
-            </div>
-            <div class="segmented" aria-label="排行维度">
-              <button class="seg-button is-active" type="button" data-dimension="song">歌曲</button>
-              <button class="seg-button" type="button" data-dimension="artist">歌手</button>
-              <button class="seg-button" type="button" data-dimension="album">专辑</button>
-            </div>
-          </div>
-          <div class="ranking-list" id="rankingList" aria-live="polite"></div>
-        </article>
-
-        <article class="panel" id="trend">
-          <div class="panel-head">
-            <div>
-              <p class="eyebrow">TREND</p>
-              <h2>播放趋势</h2>
-            </div>
-            <div class="segmented" aria-label="趋势粒度">
-              <button class="seg-button is-active" type="button" data-granularity="day">日</button>
-              <button class="seg-button" type="button" data-granularity="week">周</button>
-              <button class="seg-button" type="button" data-granularity="month">月</button>
-            </div>
-          </div>
-          <div class="trend-chart" id="trendChart" aria-live="polite"></div>
-        </article>
-      </section>
-
-      <section class="container playlist-section" id="playlists">
-        <div class="section-head">
-          <p class="eyebrow">MY PLAYLISTS</p>
-          <h2>我的歌单信息</h2>
-        </div>
+      <section class="ledger-section playlist-section" id="playlists" aria-labelledby="playlistsTitle">
+        <div class="section-heading section-heading--inline"><div><p class="eyebrow"><span>05</span> PERSONAL ARCHIVE</p><h2 id="playlistsTitle">歌单与曲目</h2></div><p>歌单浏览保持独立，不受统计窗口与趋势粒度影响。</p></div>
+        <label class="mobile-playlist-select" for="playlistSelect"><span>选择歌单</span><select id="playlistSelect" aria-label="选择歌单"></select></label>
         <div class="playlist-grid">
-          <article class="panel panel--playlist">
-            <div class="panel-head">
-              <div>
-                <p class="eyebrow">USER PLAYLIST</p>
-                <h2>歌单</h2>
-              </div>
-              <span class="source-pill">/api/playlists</span>
-            </div>
-            <div class="playlist-list" id="playlistList" aria-live="polite"></div>
-            <div class="pager" id="playlistPager" hidden></div>
-          </article>
-
-          <article class="panel panel--playlist">
-            <div class="panel-head">
-              <div>
-                <p class="eyebrow">TRACK ALL</p>
-                <h2 id="playlistTrackTitle">曲目</h2>
-              </div>
-              <span class="source-pill">/api/playlists/:id/tracks</span>
-            </div>
-            <div class="track-list" id="playlistTracks" aria-live="polite"></div>
-            <div class="pager" id="playlistTracksPager" hidden></div>
-          </article>
+          <article class="playlist-index"><div class="column-head"><div><svg aria-hidden="true"><use href="#icon-layers"></use></svg><h3>歌单索引</h3></div><span id="playlistCount">--</span></div><div class="playlist-list" id="playlistList" aria-live="polite"></div><div class="pager" id="playlistPager" hidden></div></article>
+          <article class="track-ledger"><div class="column-head"><div><svg aria-hidden="true"><use href="#icon-disc3"></use></svg><h3 id="playlistTrackTitle">曲目</h3></div><span id="trackCount">--</span></div><div class="track-list" id="playlistTracks" aria-live="polite"></div><div class="pager" id="playlistTracksPager" hidden></div></article>
         </div>
       </section>
 
+      <details class="diagnostics" id="diagnostics">
+        <summary><span><svg aria-hidden="true"><use href="#icon-cpu"></use></svg><strong>系统诊断账本</strong><small>路由、来源、快照与采集缺口</small></span><svg class="summary-chevron" aria-hidden="true"><use href="#icon-chevron-right"></use></svg></summary>
+        <div class="diagnostics-grid">
+          <section><span class="diagnostic-label">SERVICE</span><h3 id="diagnosticService">读取中</h3><p id="diagnosticServiceDetail">等待服务状态。</p></section>
+          <section><span class="diagnostic-label">SNAPSHOT</span><h3 id="diagnosticSnapshot">--</h3><p id="diagnosticPoll">最近轮询 --</p></section>
+          <section><span class="diagnostic-label">COLLECTION</span><h3 id="diagnosticQuality">尚未判定</h3><p id="diagnosticGap">采集缺口 --</p></section>
+          <section><span class="diagnostic-label">LOCAL API</span><h3>只读数据来源</h3><p><code>/api/overview</code> <code>/api/ranking</code> <code>/api/trend</code> <code>/api/hourly-activity</code> <code>/api/daily-top-songs</code> <code>/api/playlists</code></p></section>
+        </div>
+      </details>
     </main>
+
+    <footer class="page-footer"><span>SONIC CRYSTAL / CHRONO-LEDGER</span><span id="footerTimezone">LOCAL TIME</span></footer>
   </body>
 </html>
