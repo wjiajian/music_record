@@ -63,6 +63,12 @@ test('趋势周期切换同时刷新对应周期排行，不改变统计窗口�
   assert.match(dashboard, /\/api\/ranking[\s\S]*period: state\.rankingPeriod/);
 });
 
+test('页面说明准确描述统计窗口与趋势周期的联动范围', () => {
+  assert.match(html, /统计窗口控制概览与排行；趋势周期也会同步切换排行/);
+  assert.match(html, /aria-label="趋势周期；同时控制播放趋势与窗口排行"/);
+  assert.doesNotMatch(html, /统计窗口可联动排行与趋势/);
+});
+
 test('趋势使用直线分段面积图，在缺口中断并标记当前桶', () => {
   const start = source.indexOf('function renderTrend');
   const end = source.indexOf('function renderHourlyActivity', start);
@@ -96,6 +102,16 @@ test('最近播放与今日足迹共用圆形封面，且不显示更新时间',
   assert.doesNotMatch(source, /recentFreshness|todayFreshness/);
   assert.match(css, /\.song-row__art,[\s\S]*?border-radius: 50%/);
   assert.doesNotMatch(css, /\.crystal-list/);
+});
+
+test('健康状态与最近播放文案覆盖无数据和无最近记录场景', () => {
+  const start = source.indexOf('function renderHealth');
+  const end = source.indexOf('function renderOverview', start);
+  const renderer = source.slice(start, end);
+  assert.match(renderer, /!hasService \? '暂无数据' : warning \? '数据更新异常' : '数据正常'/);
+  assert.match(renderer, /health\?\.last_recent_poll_at/);
+  assert.match(renderer, /最近还没有捕获到播放记录/);
+  assert.doesNotMatch(renderer, /尚未捕获.*记录/);
 });
 
 test('趋势横纵坐标使用更大、更轻的正文数字', () => {
@@ -132,6 +148,8 @@ test('小时活跃度呈现 24 个可键盘聚焦且带准确文本的桶', () =
   assert.match(renderer, /distinct_songs/);
   assert.match(renderer, /percentFormat/);
   assert.match(renderer, /aria-label/);
+  assert.match(renderer, /占可按小时统计的播放/);
+  assert.doesNotMatch(renderer, /占已统计时段播放/);
   assert.match(css, /grid-template-columns: repeat\(24/);
   assert.match(css, /grid-template-columns: repeat\(12/);
 });

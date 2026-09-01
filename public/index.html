@@ -57,7 +57,7 @@
         <span class="hero-watermark hero-watermark--chapter" id="chapterWatermark" aria-hidden="true">CHRONO.00</span>
         <div class="hero-copy">
           <p class="eyebrow"><span>00</span> CHRONO LEDGER / LOCAL TIME</p>
-          <h1 id="pageTitle">听歌记录<span>按天结晶。</span></h1>
+          <h1 id="pageTitle">听歌记录<span>日积月累。</span></h1>
           <p class="hero-subtitle" id="heroSubtitle">正在读取个人听歌账本。</p>
           <div class="window-control">
             <span class="control-label">统计窗口</span>
@@ -73,7 +73,7 @@
             <div class="ledger-coordinate"><span>最后快照</span><strong id="lastSnapshot">--</strong></div>
           </div>
           <div class="mosaic" id="mosaic" aria-label="最近七天每日听过的歌曲封面"></div>
-          <p class="ledger-caption" id="mosaicSummary">每天最多展示八张真实封面；空沟槽不会补造数据。</p>
+          <p class="ledger-caption" id="mosaicSummary">每天最多展示 8 张真实封面；没有数据的位置保持为空。</p>
         </aside>
       </section>
 
@@ -88,7 +88,7 @@
       </section>
 
       <section class="ledger-section" id="live" aria-labelledby="liveTitle">
-        <div class="section-heading"><p class="eyebrow"><span>03</span> LIVE OBSERVATION</p><h2 id="liveTitle">此刻留下的声音</h2><p>近期事件与今日视图来自不同观察口径，分别呈现，不互相推算。</p></div>
+        <div class="section-heading"><p class="eyebrow"><span>03</span> LIVE OBSERVATION</p><h2 id="liveTitle">最近在听</h2><p>最近播放与今日足迹分别统计，互不折算。</p></div>
         <div class="split-ledger">
           <article class="stream-column">
             <div class="column-head"><div><svg aria-hidden="true"><use href="#icon-radio"></use></svg><h3>最近播放</h3></div></div>
@@ -102,7 +102,7 @@
       </section>
 
       <section class="ledger-section analytics-section" aria-labelledby="analyticsTitle">
-        <div class="section-heading section-heading--inline"><div><p class="eyebrow"><span>04</span> ACOUSTIC INDEX</p><h2 id="analyticsTitle">排行与声学轨迹</h2></div><p>排行跟随统计窗口；趋势与小时分布使用各自固定口径。</p></div>
+        <div class="section-heading section-heading--inline"><div><p class="eyebrow"><span>04</span> ACOUSTIC INDEX</p><h2 id="analyticsTitle">听歌排行与趋势</h2></div><p>统计窗口控制概览与排行；趋势周期也会同步切换排行。小时分布按最近 30 个完整自然日统计。</p></div>
         <div class="analytics-grid">
           <article class="analysis-block" id="ranking">
             <div class="block-head">
@@ -117,11 +117,11 @@
           <article class="analysis-block analysis-block--trend" id="trend">
             <div class="block-head">
               <div><span class="block-index">B</span><h3>播放趋势</h3><p id="trendRange">最近 30 天</p></div>
-              <div class="segmented" role="group" aria-label="趋势粒度"><button class="seg-button is-active" type="button" data-granularity="day" aria-pressed="true">日</button><button class="seg-button" type="button" data-granularity="week" aria-pressed="false">周</button><button class="seg-button" type="button" data-granularity="month" aria-pressed="false">月</button></div>
+              <div class="segmented" role="group" aria-label="趋势周期；同时控制播放趋势与窗口排行"><button class="seg-button is-active" type="button" data-granularity="day" aria-pressed="true">日</button><button class="seg-button" type="button" data-granularity="week" aria-pressed="false">周</button><button class="seg-button" type="button" data-granularity="month" aria-pressed="false">月</button></div>
             </div>
             <div class="trend-chart" id="trendChart" aria-live="polite"></div>
             <div class="heatmap-section">
-              <div class="heatmap-head"><div><p class="eyebrow">24H AUDIO HEATMAP</p><h4>完整自然日的小时活跃度</h4></div><p id="hourlyMeta">最近 30 个完整自然日，不含今天</p></div>
+              <div class="heatmap-head"><div><p class="eyebrow">24H AUDIO HEATMAP</p><h4>每天几点最常听歌</h4></div><p id="hourlyMeta">按最近 30 个完整自然日统计，不包含今天</p></div>
               <div class="hourly-heatmap" id="hourlyHeatmap" aria-label="00 时至 23 时播放事件分布" aria-live="polite"></div>
             </div>
           </article>
@@ -129,7 +129,7 @@
       </section>
 
       <section class="ledger-section playlist-section" id="playlists" aria-labelledby="playlistsTitle">
-        <div class="section-heading section-heading--inline"><div><p class="eyebrow"><span>05</span> PERSONAL ARCHIVE</p><h2 id="playlistsTitle">歌单与曲目</h2></div><p>歌单浏览保持独立，不受统计窗口与趋势粒度影响。</p></div>
+        <div class="section-heading section-heading--inline"><div><p class="eyebrow"><span>05</span> PERSONAL ARCHIVE</p><h2 id="playlistsTitle">歌单与曲目</h2></div><p>歌单内容独立展示，不受上方统计范围影响。</p></div>
         <label class="mobile-playlist-select" for="playlistSelect"><span>选择歌单</span><select id="playlistSelect" aria-label="选择歌单"></select></label>
         <div class="playlist-grid">
           <article class="playlist-index"><div class="column-head"><div><svg aria-hidden="true"><use href="#icon-layers"></use></svg><h3>歌单索引</h3></div><span id="playlistCount">--</span></div><div class="playlist-list" id="playlistList" aria-live="polite"></div><div class="pager" id="playlistPager" hidden></div></article>

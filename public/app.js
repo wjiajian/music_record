@@ -137,7 +137,7 @@ function formatPlayTime(value) {
 }
 
 function formatRange(range) {
-  if (!range?.start || !range?.end) return '统计范围尚未形成';
+  if (!range?.start || !range?.end) return '统计数据还在生成';
   return range.start === range.end ? range.start : `${range.start} — ${range.end}`;
 }
 
@@ -279,13 +279,13 @@ function getInsufficientText(payload, haveDays) {
   if (payload?.error) return `读取失败：${payload.error}`;
   const have = payload?.haveDays ?? haveDays ?? 0;
   const need = payload?.needDays ?? 1;
-  return `目前只有 ${formatNumber(have)} 个有效日期，至少需要 ${formatNumber(need)} 个。`;
+  return `目前只有 ${formatNumber(have)} 天有效记录，至少需要 ${formatNumber(need)} 天。`;
 }
 
 function missingDailyTopText(reason) {
-  if (reason === 'gap') return '数据缺口：这一天没有被完整观察。';
-  if (reason === 'insufficient') return '数据不足：尚未形成可用的日级统计。';
-  return '无播放：这一天已完整观察，播放次数为零。';
+  if (reason === 'gap') return '数据不完整：这一天的记录可能不完整。';
+  if (reason === 'insufficient') return '记录还不够：暂时无法生成这一天的统计。';
+  return '这一天没有听歌记录。';
 }
 
 function renderMosaic(payload = null) {
@@ -319,7 +319,7 @@ function renderMosaic(payload = null) {
     const lowerBound = item.lower_bound ? '≥' : '';
     count.textContent = item.songs?.length
       ? `${lowerBound}${formatNumber(item.plays)} 次 / ${formatNumber(item.distinct_songs)} 首`
-      : item.reason === 'gap' ? '沟槽断开' : item.reason === 'insufficient' ? '尚未形成' : '空沟槽';
+      : item.reason === 'gap' ? '数据中断' : item.reason === 'insufficient' ? '尚未形成' : '暂无记录';
     meta.append(date, count);
 
     const groove = document.createElement('div');
@@ -357,9 +357,9 @@ function renderMosaic(payload = null) {
   if (payload?.error) {
     nodes.mosaicSummary.textContent = `七日封面读取失败：${payload.error}`;
   } else if (payload?.meta?.data_quality?.lower_bound) {
-    nodes.mosaicSummary.textContent = '七日范围存在历史覆盖不足或采集缺口；可见次数均按下界理解。';
+    nodes.mosaicSummary.textContent = '最近七天的数据尚不完整；当前次数仅表示至少播放过这么多次。';
   } else {
-    nodes.mosaicSummary.textContent = '每天最多展示八张真实封面；空沟槽不会补造数据。';
+    nodes.mosaicSummary.textContent = '每天最多展示 8 张真实封面；没有数据的位置保持为空。';
   }
 }
 
@@ -368,11 +368,14 @@ function renderHealth(health) {
   const warning = health?.counter_stale || health?.last_fetch_status === 'fail';
   const stateName = !hasService ? 'loading' : warning ? 'warning' : 'healthy';
   nodes.serviceStatus.dataset.state = stateName;
-  nodes.serviceStatusText.textContent = warning ? '采集需注意' : hasService ? '数据监听中' : '等待数据';
+  nodes.serviceStatusText.textContent = !hasService ? '暂无数据' : warning ? '数据更新异常' : '数据正常';
   nodes.lastSnapshot.textContent = health?.last_snapshot || '--';
+  const recentText = health?.last_recent_poll_at
+    ? `最近一次播放记录于 ${formatPlayTime(Date.parse(health.last_recent_poll_at))}。`
+    : '最近还没有捕获到播放记录。';
   nodes.heroSubtitle.textContent = health?.last_snapshot
-    ? `账本更新至 ${health.last_snapshot}；最近事件于 ${health.last_recent_poll_at ? formatPlayTime(Date.parse(health.last_recent_poll_at)) : '尚未捕获'} 观察。`
-    : '还没有可用快照；页面会保留数据不足状态，不把未知解释为零。';
+    ? `账本更新至 ${health.last_snapshot}；${recentText}`
+    : '还没有可用快照；缺少的记录会标为数据不足，不会按 0 次展示。';
 }
 
 function renderOverview(overview, health) {
@@ -381,7 +384,7 @@ function renderOverview(overview, health) {
     setMetricValue(nodes.metricHours, '--');
     setMetricValue(nodes.metricSongs, '--');
     setMetricValue(nodes.metricDays, formatNumber(health.have_days));
-    nodes.metricRange.textContent = '统计范围尚未形成';
+    nodes.metricRange.textContent = '统计数据还在生成';
     nodes.metricPlaysHint.textContent = overview?.error ? `读取失败：${overview.error}` : getInsufficientText(overview, health.have_days);
     return;
   }
@@ -393,7 +396,7 @@ function renderOverview(overview, health) {
   setMetricValue(nodes.metricSongs, `${prefix}${formatNumber(overview.totals.distinct_songs)}`);
   setMetricValue(nodes.metricDays, `${prefix}${formatNumber(overview.totals.days_tracked)}`);
   nodes.metricRange.textContent = formatRange(overview.range);
-  nodes.metricPlaysHint.textContent = lowerBound ? '下界统计 · 范围内存在未完整观察的数据' : '精确统计 · 当前范围观察完整';
+  nodes.metricPlaysHint.textContent = lowerBound ? '当前次数为最低估计；统计范围内存在不完整记录。' : '当前范围记录完整。';
 }
 
 function rankingPic(item) {
@@ -415,7 +418,7 @@ function renderRanking(payload, health) {
   nodes.rankingRange.textContent = formatRange(payload.meta?.period_resolved);
   const items = payload.items || [];
   if (!items.length) {
-    nodes.rankingList.append(emptyState('无播放', '当前统计窗口已读取，但没有可展示的播放增量。'));
+    nodes.rankingList.append(emptyState('无播放', '当前统计周期内没有新增的播放记录。'));
     return;
   }
 
@@ -575,7 +578,7 @@ function renderTrend(payload, health) {
     return;
   }
   if (series.every((point) => !point.plays) && !series.some((point) => point.has_gap)) {
-    nodes.trendChart.append(emptyState('无播放', '当前趋势范围观察完整，但没有播放增量。'));
+    nodes.trendChart.append(emptyState('无播放', '当前趋势范围内没有新增播放记录。'));
     return;
   }
 
@@ -601,7 +604,7 @@ function renderTrend(payload, health) {
   const title = makeSvgElement('title', { id: 'trendSvgTitle' });
   title.textContent = '播放趋势直线分段面积图';
   const desc = makeSvgElement('desc', { id: 'trendSvgDesc' });
-  desc.textContent = '每个点对应真实日、ISO 周或自然月；斜纹处是采集缺口，虚线标记尚未结束的当前周期。';
+  desc.textContent = '每个点对应一天、一周或一个月；斜纹表示记录不完整，虚线表示当前周期尚未结束。';
   const defs = makeSvgElement('defs');
   const gradient = makeSvgElement('linearGradient', { id: 'trend-area-gradient', x1: 0, y1: 0, x2: 0, y2: 1 });
   gradient.append(makeSvgElement('stop', { offset: '0%', 'stop-color': '#1f40ed', 'stop-opacity': '.24' }), makeSvgElement('stop', { offset: '100%', 'stop-color': '#1f40ed', 'stop-opacity': '.015' }));
@@ -660,7 +663,7 @@ function renderTrend(payload, health) {
 
   const caption = document.createElement('figcaption');
   caption.className = 'trend-caption';
-  for (const [className, label] of [['legend-line', '真实离散桶'], ['legend-current', '进行中'], ['legend-gap', '采集缺口']]) {
+  for (const [className, label] of [['legend-line', '实际统计'], ['legend-current', '进行中'], ['legend-gap', '记录不完整']]) {
     const item = document.createElement('span');
     const marker = document.createElement('i');
     marker.className = className;
@@ -676,7 +679,7 @@ function renderTrend(payload, health) {
     const item = document.createElement('li');
     item.classList.toggle('is-gap', Boolean(point.has_gap));
     item.textContent = point.has_gap
-      ? `${point.bucket} · 数据缺口 · ≥${formatNumber(point.plays)}`
+      ? `${point.bucket} · 记录不完整 · ≥${formatNumber(point.plays)}`
       : `${point.bucket} · ${point.lower_bound ? '≥' : ''}${formatNumber(point.plays)}${point.is_current ? ' · 进行中' : ''}`;
     textData.append(item);
   }
@@ -687,7 +690,7 @@ function renderHourlyActivity(payload) {
   nodes.hourlyHeatmap.replaceChildren();
   if (!payload || payload.error) {
     nodes.hourlyHeatmap.append(emptyState('小时分布读取失败', payload?.error || '小时活跃度接口没有返回结果。', { kind: 'error', iconName: 'triangle-alert' }));
-    nodes.hourlyMeta.textContent = '读取失败；不将未知显示为零';
+    nodes.hourlyMeta.textContent = '读取失败；未知数据不会按 0 次展示';
     return;
   }
   const buckets = payload.buckets || [];
@@ -704,7 +707,7 @@ function renderHourlyActivity(payload) {
     const intensity = (bucket.plays || 0) / max;
     cell.style.setProperty('--intensity', intensity.toFixed(3));
     cell.dataset.level = String(bucket.plays ? Math.max(1, Math.ceil(intensity * 5)) : 0);
-    const label = `${String(bucket.hour).padStart(2, '0')} 时：${lowerBound ? '至少 ' : ''}${formatNumber(bucket.plays)} 次，${formatNumber(bucket.distinct_songs)} 首不同歌曲，占可定位播放 ${percentFormat.format(bucket.share || 0)}`;
+    const label = `${String(bucket.hour).padStart(2, '0')} 时：${lowerBound ? '至少 ' : ''}${formatNumber(bucket.plays)} 次，${formatNumber(bucket.distinct_songs)} 首不同歌曲，占可按小时统计的播放 ${percentFormat.format(bucket.share || 0)}`;
     cell.setAttribute('aria-label', label);
     cell.title = label;
     const bar = document.createElement('i');
@@ -719,13 +722,13 @@ function renderHourlyActivity(payload) {
   });
   nodes.hourlyHeatmap.replaceChildren(...cells);
   const meta = payload.meta || {};
-  const qualityLabel = meta.data_quality?.historical && !meta.located_plays ? '数据不足 · ' : lowerBound ? '下界视图 · ' : '';
+  const qualityLabel = meta.data_quality?.historical && !meta.located_plays ? '数据不足 · ' : lowerBound ? '最低估计 · ' : '';
   const unlocated = meta.unlocated_plays
-    ? `；另有 ${formatNumber(meta.unlocated_plays)} 次日级补量无法定位到小时`
+    ? `；另有 ${formatNumber(meta.unlocated_plays)} 次播放只能统计到天，无法细分到小时`
     : '';
-  const gap = meta.collection_gaps?.length ? `；存在 ${formatNumber(meta.collection_gaps.length)} 段采集缺口` : '';
-  nodes.hourlyMeta.textContent = `${qualityLabel}${formatRange(meta.range)} · ${formatNumber(meta.located_plays)} 次可定位事件${unlocated}${gap}`;
-  nodes.footerTimezone.textContent = `${meta.timezone || 'LOCAL TIME'} / EXCLUDES TODAY`;
+  const gap = meta.collection_gaps?.length ? `；存在 ${formatNumber(meta.collection_gaps.length)} 段记录不完整` : '';
+  nodes.hourlyMeta.textContent = `${qualityLabel}${formatRange(meta.range)} · ${formatNumber(meta.located_plays)} 次已定位播放${unlocated}${gap}`;
+  nodes.footerTimezone.textContent = `${meta.timezone || '本地时间'} / 不含今天`;
 }
 
 function renderPlaylistSelect(items) {
