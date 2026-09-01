@@ -6,11 +6,12 @@ const source = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'ut
 const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
 const css = fs.readFileSync(new URL('../public/styles.css', import.meta.url), 'utf8');
 
-test('统计窗口切换同时刷新概览与排行，不重载趋势、封面墙、实时流或歌单', () => {
+test('统计窗口切换同时重置概览与排行周期，不重载趋势、封面墙、实时流或歌单', () => {
   const handlerStart = source.indexOf("const windowButton = event.target.closest('[data-window]')");
   const handlerEnd = source.indexOf("const dimension = event.target.closest('[data-dimension]')");
   const handler = source.slice(handlerStart, handlerEnd);
   assert.match(handler, /state\.window = windowButton\.dataset\.window/);
+  assert.match(handler, /state\.rankingPeriod = state\.window/);
   assert.match(handler, /loadWindowData\(\)/);
   assert.doesNotMatch(handler, /loadDashboard\(\)|loadTrend\(\)|renderMosaic/);
 
@@ -19,11 +20,12 @@ test('统计窗口切换同时刷新概览与排行，不重载趋势、封面�
   const loader = source.slice(loaderStart, loaderEnd);
   assert.match(loader, /\/api\/overview/);
   assert.match(loader, /\/api\/ranking/);
-  assert.ok((loader.match(/period: state\.window/g) || []).length >= 2);
+  assert.match(loader, /\/api\/overview[\s\S]*period: state\.window/);
+  assert.match(loader, /\/api\/ranking[\s\S]*period: state\.rankingPeriod/);
   assert.doesNotMatch(loader, /\/api\/trend|daily-top-songs|record\/recent|listen\/data\/today|\/api\/playlists/);
 });
 
-test('排行维度切换只请求当前统计窗口的本地 ranking 接口', () => {
+test('排行维度切换只请求当前排行周期的本地 ranking 接口', () => {
   const handlerStart = source.indexOf("const dimension = event.target.closest('[data-dimension]')");
   const handlerEnd = source.indexOf("const granularity = event.target.closest('[data-granularity]')");
   const handler = source.slice(handlerStart, handlerEnd);
@@ -31,20 +33,22 @@ test('排行维度切换只请求当前统计窗口的本地 ranking 接口', ()
   assert.doesNotMatch(handler, /loadDashboard\(\)|loadTrend\(\)/);
 
   const loaderStart = source.indexOf('async function loadRanking()');
-  const loaderEnd = source.indexOf('// 趋势粒度', loaderStart);
+  const loaderEnd = source.indexOf('async function loadTrend()', loaderStart);
   const loader = source.slice(loaderStart, loaderEnd);
   assert.match(loader, /\/api\/ranking/);
-  assert.match(loader, /period: state\.window/);
+  assert.match(loader, /period: state\.rankingPeriod/);
   assert.doesNotMatch(loader, /record\/recent|listen\/data\/today|\/api\/trend|loadDashboard/);
 });
 
-test('趋势粒度与统计窗口解耦，只刷新固定范围趋势', () => {
+test('趋势周期切换同时刷新对应周期排行，不改变统计窗口或其它区域', () => {
   const handlerStart = source.indexOf("const granularity = event.target.closest('[data-granularity]')");
   const handlerEnd = source.indexOf("const pager = event.target.closest('[data-pager]')");
   const handler = source.slice(handlerStart, handlerEnd);
   assert.match(handler, /state\.granularity = granularity\.dataset\.granularity/);
+  assert.match(handler, /state\.rankingPeriod = state\.granularity/);
   assert.match(handler, /loadTrend\(\)/);
-  assert.doesNotMatch(handler, /loadRanking\(\)|state\.window|loadDashboard\(\)/);
+  assert.match(handler, /loadRanking\(\)/);
+  assert.doesNotMatch(handler, /state\.window\s*=|loadWindowData\(\)|loadDashboard\(\)/);
 
   const loaderStart = source.indexOf('async function loadTrend()');
   const loaderEnd = source.indexOf('async function loadDashboard()', loaderStart);
@@ -52,6 +56,11 @@ test('趋势粒度与统计窗口解耦，只刷新固定范围趋势', () => {
   assert.match(loader, /\/api\/trend/);
   assert.match(loader, /state\.granularity === 'day' \? 30 : 12/);
   assert.doesNotMatch(loader, /\/api\/ranking|record\/recent|listen\/data\/today|loadDashboard/);
+
+  const dashboardStart = source.indexOf('async function loadDashboard()');
+  const dashboardEnd = source.indexOf("document.addEventListener('click'", dashboardStart);
+  const dashboard = source.slice(dashboardStart, dashboardEnd);
+  assert.match(dashboard, /\/api\/ranking[\s\S]*period: state\.rankingPeriod/);
 });
 
 test('趋势使用直线分段面积图，在缺口中断并标记当前桶', () => {

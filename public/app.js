@@ -1,5 +1,6 @@
 const state = {
   window: 'day',
+  rankingPeriod: 'day',
   dimension: 'song',
   granularity: 'day',
   playlistId: null,
@@ -871,7 +872,7 @@ async function loadPlaylistTracks() {
   nodes.playlistTracks.removeAttribute('aria-busy');
 }
 
-// 统计窗口是概览与排行共享的唯一范围控制，不触发趋势、封面墙、实时流或歌单请求。
+// 统计窗口会同时重置概览与排行周期，不触发趋势、封面墙、实时流或歌单请求。
 async function loadWindowData() {
   setActiveButtons();
   const currentOverviewRequest = ++overviewRequestId;
@@ -879,14 +880,14 @@ async function loadWindowData() {
   nodes.rankingList.setAttribute('aria-busy', 'true');
   const [overview, ranking] = await Promise.all([
     getJson('/api/overview', { period: state.window }).catch((error) => ({ error: error.message })),
-    getJson('/api/ranking', { dimension: state.dimension, metric: 'plays', period: state.window, limit: 10 }).catch((error) => ({ error: error.message })),
+    getJson('/api/ranking', { dimension: state.dimension, metric: 'plays', period: state.rankingPeriod, limit: 10 }).catch((error) => ({ error: error.message })),
   ]);
   if (currentOverviewRequest === overviewRequestId) renderOverview(overview, latestHealth);
   if (currentRankingRequest === rankingRequestId) renderRanking(ranking, latestHealth);
   nodes.rankingList.removeAttribute('aria-busy');
 }
 
-// 排行维度只改变同一统计窗口下的本地排行查询。
+// 排行维度只改变当前排行周期下的本地排行查询。
 async function loadRanking() {
   setActiveButtons();
   const requestId = ++rankingRequestId;
@@ -894,14 +895,14 @@ async function loadRanking() {
   const ranking = await getJson('/api/ranking', {
     dimension: state.dimension,
     metric: 'plays',
-    period: state.window,
+    period: state.rankingPeriod,
     limit: 10,
   }).catch((error) => ({ error: error.message }));
   if (requestId === rankingRequestId) renderRanking(ranking, latestHealth);
   nodes.rankingList.removeAttribute('aria-busy');
 }
 
-// 趋势粒度独立于统计窗口，只查询固定的 30 日 / 12 周 / 12 月序列。
+// 趋势查询固定的 30 日 / 12 周 / 12 月序列；趋势按钮另行同步排行周期。
 async function loadTrend() {
   setActiveButtons();
   const requestId = ++trendRequestId;
@@ -936,7 +937,7 @@ async function loadDashboard() {
       .catch((error) => ({ error: error.message }));
     const [overview, ranking, trend, dailyTops, hourly] = await Promise.all([
       getJson('/api/overview', { period: state.window }).catch((error) => ({ error: error.message })),
-      getJson('/api/ranking', { dimension: state.dimension, metric: 'plays', period: state.window, limit: 10 }).catch((error) => ({ error: error.message })),
+      getJson('/api/ranking', { dimension: state.dimension, metric: 'plays', period: state.rankingPeriod, limit: 10 }).catch((error) => ({ error: error.message })),
       getJson('/api/trend', { granularity: state.granularity, last: state.granularity === 'day' ? 30 : 12 }).catch((error) => ({ error: error.message })),
       getJson('/api/daily-top-songs', { days: MOSAIC_DAYS, limit: MOSAIC_COLUMNS }).catch((error) => ({ error: error.message })),
       getJson('/api/hourly-activity').catch((error) => ({ error: error.message })),
@@ -972,6 +973,7 @@ document.addEventListener('click', (event) => {
   const windowButton = event.target.closest('[data-window]');
   if (windowButton) {
     state.window = windowButton.dataset.window;
+    state.rankingPeriod = state.window;
     loadWindowData();
     return;
   }
@@ -986,7 +988,9 @@ document.addEventListener('click', (event) => {
   const granularity = event.target.closest('[data-granularity]');
   if (granularity) {
     state.granularity = granularity.dataset.granularity;
+    state.rankingPeriod = state.granularity;
     loadTrend();
+    loadRanking();
     return;
   }
 
