@@ -551,7 +551,7 @@ function splitTrendSegments(points) {
   const segments = [];
   let current = [];
   for (const point of points) {
-    if (point.has_gap) {
+    if (point.missing) {
       if (current.length) segments.push(current);
       current = [];
     } else {
@@ -577,7 +577,7 @@ function renderTrend(payload, health) {
     nodes.trendChart.append(emptyState('数据不足', '当前粒度还没有形成任何时间桶。', { kind: 'insufficient' }));
     return;
   }
-  if (series.every((point) => !point.plays) && !series.some((point) => point.has_gap)) {
+  if (series.every((point) => !point.plays) && !series.some((point) => point.missing)) {
     nodes.trendChart.append(emptyState('无播放', '当前趋势范围内没有新增播放记录。'));
     return;
   }
@@ -604,7 +604,7 @@ function renderTrend(payload, health) {
   const title = makeSvgElement('title', { id: 'trendSvgTitle' });
   title.textContent = '播放趋势直线分段面积图';
   const desc = makeSvgElement('desc', { id: 'trendSvgDesc' });
-  desc.textContent = '每个点对应一天、一周或一个月；斜纹表示记录不完整，虚线表示当前周期尚未结束。';
+  desc.textContent = '每个点为已记录播放量；虚线表示下界或进行中的周期。未知数据断线，底部斜纹标出空缺，不按零次绘制。';
   const defs = makeSvgElement('defs');
   const gradient = makeSvgElement('linearGradient', { id: 'trend-area-gradient', x1: 0, y1: 0, x2: 0, y2: 1 });
   gradient.append(makeSvgElement('stop', { offset: '0%', 'stop-color': '#1f40ed', 'stop-opacity': '.24' }), makeSvgElement('stop', { offset: '100%', 'stop-color': '#1f40ed', 'stop-opacity': '.015' }));
@@ -621,16 +621,23 @@ function renderTrend(payload, health) {
     svg.append(label);
   }
 
-  for (const point of points.filter((entry) => entry.has_gap)) {
+  for (const point of points.filter((entry) => entry.missing)) {
     const gapWidth = Math.max(10, Math.min(step * 0.72, 54));
-    svg.append(makeSvgElement('rect', { x: point.x - gapWidth / 2, y: top, width: gapWidth, height: baseline - top, class: 'trend-gap' }));
+    svg.append(makeSvgElement('rect', { x: point.x - gapWidth / 2, y: baseline - 6, width: gapWidth, height: 6, class: 'trend-gap' }));
   }
 
   for (const segment of splitTrendSegments(points)) {
-    const line = segment.map((point, index) => `${index ? 'L' : 'M'} ${point.x} ${point.y}`).join(' ');
-    const area = `M ${segment[0].x} ${baseline} ${line.replace(/^M/, 'L')} L ${segment.at(-1).x} ${baseline} Z`;
-    svg.append(makeSvgElement('path', { d: area, class: 'trend-area' }));
-    svg.append(makeSvgElement('path', { d: line, class: 'trend-line' }));
+    for (let index = 1; index < segment.length; index += 1) {
+      const previous = segment[index - 1];
+      const point = segment[index];
+      const uncertain = previous.lower_bound || point.lower_bound || previous.is_current || point.is_current;
+      const line = `M ${previous.x} ${previous.y} L ${point.x} ${point.y}`;
+      if (!uncertain) {
+        const area = `M ${previous.x} ${baseline} L ${previous.x} ${previous.y} L ${point.x} ${point.y} L ${point.x} ${baseline} Z`;
+        svg.append(makeSvgElement('path', { d: area, class: 'trend-area' }));
+      }
+      svg.append(makeSvgElement('path', { d: line, class: `trend-line${uncertain ? ' is-lower-bound' : ''}` }));
+    }
   }
 
   const labelStride = Math.max(1, Math.ceil(series.length / 7));
@@ -638,15 +645,15 @@ function renderTrend(payload, health) {
     if (point.is_current) {
       svg.append(makeSvgElement('line', { x1: point.x, y1: top, x2: point.x, y2: baseline, class: 'trend-current-line' }));
     }
-    if (!point.has_gap) {
+    if (!point.missing) {
       const circle = makeSvgElement('circle', {
         cx: point.x,
         cy: point.y,
         r: point.is_current ? 5 : 3.5,
-        class: `trend-point${point.is_current ? ' is-current' : ''}`,
+        class: `trend-point${point.lower_bound ? ' is-lower-bound' : ''}${point.is_current ? ' is-current' : ''}`,
         tabindex: 0,
         role: 'img',
-        'aria-label': `${point.bucket}：${point.lower_bound ? '至少 ' : ''}${formatNumber(point.plays)} 次${point.is_current ? '，进行中' : ''}`,
+        'aria-label': `${point.bucket}：${point.lower_bound ? '至少 ' : ''}${formatNumber(point.plays)} 次${point.has_gap ? '，记录不完整' : ''}${point.estimated ? '，日级归属不确定' : ''}${point.is_current ? '，进行中' : ''}`,
       });
       const tooltip = makeSvgElement('title');
       tooltip.textContent = circle.getAttribute('aria-label');
@@ -663,7 +670,7 @@ function renderTrend(payload, health) {
 
   const caption = document.createElement('figcaption');
   caption.className = 'trend-caption';
-  for (const [className, label] of [['legend-line', '实际统计'], ['legend-current', '进行中'], ['legend-gap', '记录不完整']]) {
+  for (const [className, label] of [['legend-line', '已记录播放'], ['legend-current', '下界 / 进行中'], ['legend-gap', '数据未知（断线）']]) {
     const item = document.createElement('span');
     const marker = document.createElement('i');
     marker.className = className;
@@ -677,10 +684,8 @@ function renderTrend(payload, health) {
   textData.setAttribute('aria-label', '趋势文本数据');
   for (const point of series) {
     const item = document.createElement('li');
-    item.classList.toggle('is-gap', Boolean(point.has_gap));
-    item.textContent = point.has_gap
-      ? `${point.bucket} · 记录不完整 · ≥${formatNumber(point.plays)}`
-      : `${point.bucket} · ${point.lower_bound ? '≥' : ''}${formatNumber(point.plays)}${point.is_current ? ' · 进行中' : ''}`;
+    item.classList.toggle('is-gap', Boolean(point.has_gap || point.missing));
+    item.textContent = `${point.bucket} · ${point.missing ? '数据未知' : `${point.lower_bound ? '≥' : ''}${formatNumber(point.plays)}`}${point.has_gap ? ' · 记录不完整' : ''}${point.estimated ? ' · 日级归属不确定' : ''}${point.is_current ? ' · 进行中' : ''}`;
     textData.append(item);
   }
   nodes.trendChart.append(figure, textData);

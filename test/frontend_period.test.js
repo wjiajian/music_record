@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert';
 import fs from 'node:fs';
+import vm from 'node:vm';
 
 const source = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'utf8');
 const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
@@ -69,7 +70,7 @@ test('页面说明准确描述统计窗口与趋势周期的联动范围', () =>
   assert.doesNotMatch(html, /统计窗口可联动排行与趋势/);
 });
 
-test('趋势使用直线分段面积图，在缺口中断并标记当前桶', () => {
+test('趋势使用直线分段面积图，在未知空桶中断并标记当前桶', () => {
   const start = source.indexOf('function renderTrend');
   const end = source.indexOf('function renderHourlyActivity', start);
   const renderer = source.slice(start, end);
@@ -81,6 +82,20 @@ test('趋势使用直线分段面积图，在缺口中断并标记当前桶', ()
   assert.match(renderer, /point\.is_current/);
   assert.match(renderer, /trend-text-data/);
   assert.doesNotMatch(renderer, /bezier|quadraticCurve|cubic/i);
+});
+
+test('趋势分段保留有记录的缺口桶与真实零值，只在未知空桶断线', () => {
+  const start = source.indexOf('function splitTrendSegments');
+  const end = source.indexOf('function renderTrend', start);
+  const split = vm.runInNewContext(`${source.slice(start, end)}; splitTrendSegments`);
+  const points = [
+    { bucket: 'a', plays: 10 },
+    { bucket: 'b', plays: 6, has_gap: true, lower_bound: true, missing: false },
+    { bucket: 'c', plays: 0, missing: false },
+    { bucket: 'd', plays: 0, has_gap: true, missing: true },
+    { bucket: 'e', plays: 3 },
+  ];
+  assert.deepEqual(JSON.parse(JSON.stringify(split(points))), [points.slice(0, 3), points.slice(4)]);
 });
 
 test('顶部栏向下滚动自动隐藏，向上滚动或靠近顶部时恢复', () => {
@@ -119,6 +134,7 @@ test('趋势横纵坐标使用更大、更轻的正文数字', () => {
   assert.match(axisRule, /font-family: var\(--body\)/);
   assert.match(axisRule, /font-size: 12\.5px/);
   assert.match(axisRule, /font-weight: 400/);
+  assert.match(axisRule, /stroke: none/);
   assert.match(source, /'dominant-baseline': 'middle'/);
 });
 

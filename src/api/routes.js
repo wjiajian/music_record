@@ -221,6 +221,8 @@ export default async function routes(fastify) {
       } else {
         from = first;
       }
+      // 默认窗口不补出采集开始之前的空白月份；显式 from 仍保留。
+      if (from < first) from = first;
     }
 
     const filter = {};
@@ -231,20 +233,30 @@ export default async function routes(fastify) {
     const daily = Q.dailyTotals(db, from, to, filter);
     const gaps = gapDates(dates);
     const today = nowLocalDate();
+    const counter = Q.counterStatus(db);
+    const lastSuccessDate = localDateFromISO(counter.last_success_at);
     const series = buckets(granularity, from, to).map((b) => {
       const inB = daily.filter((d) => d.date >= b.start && d.date <= b.end);
       const plays = inB.reduce((a, d) => a + d.plays, 0);
       const est = inB.reduce((a, d) => a + (d.est_ms || 0), 0);
       const observedEnd = b.end < to ? b.end : to;
       const quality = dataQuality(db, b.start, observedEnd);
+      const hasGap = gaps.some((g) => g >= b.start && g <= observedEnd) || quality.has_gap;
+      const estimated = inB.some((d) => d.estimated);
+      const lowerBound = quality.lower_bound || hasGap || estimated ||
+        !lastSuccessDate || observedEnd > lastSuccessDate;
+      // 有记录的缺口桶仍有可展示的下界；未知的空桶不能冒充真实零值。
+      const missing = plays === 0 && (lowerBound || b.end < first || b.start > today);
       return {
         bucket: b.bucket,
         start: b.start,
         end: b.end,
         plays,
         est_minutes: Math.round(est / 60000),
-        has_gap: gaps.some((g) => g >= b.start && g <= b.end) || quality.has_gap,
-        lower_bound: quality.lower_bound,
+        has_gap: hasGap,
+        estimated,
+        missing,
+        lower_bound: lowerBound,
         is_current: b.start <= today && b.end >= today,
       };
     });

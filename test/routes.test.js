@@ -47,6 +47,62 @@ async function appWithDb(db) {
   return app;
 }
 
+test('趋势默认不生成采集前的月份，显式请求的未知空桶与已覆盖零值分开', async () => {
+  const db = freshDb();
+  seed(db);
+  // 清除快照夹具中的缺口，用连续计数覆盖确认 7 月 15 日的零值。
+  db.prepare('DELETE FROM snapshot_item').run();
+  db.prepare('DELETE FROM snapshot').run();
+  const app = await appWithDb(db);
+  try {
+    const monthly = (await app.inject('/api/trend?granularity=month&last=12&to=2020-07-20')).json();
+    assert.equal(monthly.meta.range.start, '2020-07-14');
+    assert.deepEqual(monthly.series.map((p) => p.bucket), ['2020-07']);
+    assert.equal(monthly.series[0].plays, 5);
+
+    const daily = (await app.inject('/api/trend?from=2020-07-13&to=2020-07-15')).json().series;
+    assert.equal(daily[0].missing, true);
+    assert.equal(daily[1].plays, 2);
+    assert.equal(daily[1].missing, false);
+    assert.equal(daily[2].plays, 0);
+    assert.equal(daily[2].missing, false);
+    assert.equal(daily[2].lower_bound, false);
+
+    const stopped = (await app.inject('/api/trend?from=2020-07-21&to=2020-07-21')).json().series[0];
+    assert.equal(stopped.missing, true);
+  } finally {
+    await app.close();
+    db.close();
+  }
+});
+
+test('采集缺口在日周月汇总中保留已有量并标下界，跨日归属也标下界', async () => {
+  const db = freshDb();
+  seed(db);
+  db.prepare('INSERT INTO counter_poll_gap(started_at,ended_at,reason) VALUES(?,?,?)')
+    .run('2020-07-20T01:00:00Z', '2020-07-20T01:01:00Z', '短暂失败');
+  const app = await appWithDb(db);
+  try {
+    for (const granularity of ['day', 'week', 'month']) {
+      const point = (await app.inject(`/api/trend?granularity=${granularity}&from=2020-07-20&to=2020-07-20`)).json().series[0];
+      assert.equal(point.plays, 3);
+      assert.equal(point.has_gap, true);
+      assert.equal(point.lower_bound, true);
+      assert.equal(point.missing, false);
+    }
+    db.prepare('DELETE FROM counter_poll_gap').run();
+    db.prepare("UPDATE daily_play SET span_days=16 WHERE play_date='2020-07-20'").run();
+    const point = (await app.inject('/api/trend?from=2020-07-20&to=2020-07-20')).json().series[0];
+    assert.equal(point.has_gap, false);
+    assert.equal(point.estimated, true);
+    assert.equal(point.lower_bound, true);
+    assert.equal(point.missing, false);
+  } finally {
+    await app.close();
+    db.close();
+  }
+});
+
 test('overview/ranking 使用滚动周期和 daily_play 统一口径', async () => {
   const db = freshDb();
   seed(db);

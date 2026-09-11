@@ -232,7 +232,7 @@ export function dailyTotals(db, start, end, opts = {}) {
               SUM(dp.plays) AS plays,
               SUM(dp.plays * COALESCE(s.duration_ms,0)) AS est_ms,
               COUNT(DISTINCT dp.song_id) AS songs,
-              MAX(dp.is_estimated) AS estimated
+              MAX(dp.is_estimated = 1 OR dp.span_days > 1) AS estimated
        FROM daily_play dp ${join}
        WHERE ${where.join(' AND ')}
        GROUP BY dp.play_date ORDER BY dp.play_date`
