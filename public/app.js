@@ -25,7 +25,7 @@ const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 
 const nodes = {
   topbar: document.querySelector('.topbar'),
-  dateWatermark: document.querySelector('#dateWatermark'),
+  heroDate: document.querySelector('#heroDate'),
   heroSubtitle: document.querySelector('#heroSubtitle'),
   serviceStatus: document.querySelector('#serviceStatus'),
   serviceStatusText: document.querySelector('#serviceStatusText'),
@@ -1044,6 +1044,7 @@ nodes.refreshButton.addEventListener('click', loadDashboard);
 
 const now = new Date();
 const localDate = [now.getFullYear(), String(now.getMonth() + 1).padStart(2, '0'), String(now.getDate()).padStart(2, '0')].join('-');
-nodes.dateWatermark.textContent = localDate;
+nodes.heroDate.dateTime = localDate;
+nodes.heroDate.textContent = localDate.replaceAll('-', '.');
 renderMosaic();
 loadDashboard();
