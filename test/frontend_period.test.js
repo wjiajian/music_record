@@ -65,7 +65,7 @@ test('趋势周期切换同时刷新对应周期排行，不改变统计窗口�
 });
 
 test('页面说明准确描述统计窗口与趋势周期的联动范围', () => {
-  assert.match(html, /统计窗口控制概览与排行；趋势周期也会同步切换排行/);
+  assert.match(html, /title="同时切换排行周期"/);
   assert.match(html, /aria-label="趋势周期；同时控制播放趋势与窗口排行"/);
   assert.doesNotMatch(html, /统计窗口可联动排行与趋势/);
 });
@@ -125,7 +125,8 @@ test('健康状态与最近播放文案覆盖无数据和无最近记录场景',
   const renderer = source.slice(start, end);
   assert.match(renderer, /!hasService \? '暂无数据' : warning \? '数据更新异常' : '数据正常'/);
   assert.match(renderer, /health\?\.last_recent_poll_at/);
-  assert.match(renderer, /最近还没有捕获到播放记录/);
+  assert.match(renderer, /更新于/);
+  assert.doesNotMatch(renderer, /最近一次播放记录于/);
   assert.doesNotMatch(renderer, /尚未捕获.*记录/);
 });
 

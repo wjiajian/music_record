@@ -26,9 +26,7 @@ const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 const nodes = {
   topbar: document.querySelector('.topbar'),
   dateWatermark: document.querySelector('#dateWatermark'),
-  chapterWatermark: document.querySelector('#chapterWatermark'),
   heroSubtitle: document.querySelector('#heroSubtitle'),
-  lastSnapshot: document.querySelector('#lastSnapshot'),
   serviceStatus: document.querySelector('#serviceStatus'),
   serviceStatusText: document.querySelector('#serviceStatusText'),
   refreshButton: document.querySelector('#refreshButton'),
@@ -207,7 +205,8 @@ function emptyState(title, text, { kind = 'empty', iconName = 'compass' } = {}) 
   strong.textContent = title;
   const paragraph = document.createElement('p');
   paragraph.textContent = text;
-  inner.append(iconWrap, strong, paragraph);
+  inner.append(iconWrap, strong);
+  if (text) inner.append(paragraph);
   wrap.append(inner);
   return wrap;
 }
@@ -357,10 +356,11 @@ function renderMosaic(payload = null) {
   if (payload?.error) {
     nodes.mosaicSummary.textContent = `七日封面读取失败：${payload.error}`;
   } else if (payload?.meta?.data_quality?.lower_bound) {
-    nodes.mosaicSummary.textContent = '最近七天的数据尚不完整；当前次数仅表示至少播放过这么多次。';
+    nodes.mosaicSummary.textContent = '部分记录缺失';
   } else {
-    nodes.mosaicSummary.textContent = '每天最多展示 8 张真实封面；没有数据的位置保持为空。';
+    nodes.mosaicSummary.textContent = '';
   }
+  nodes.mosaicSummary.hidden = !nodes.mosaicSummary.textContent;
 }
 
 function renderHealth(health) {
@@ -369,13 +369,9 @@ function renderHealth(health) {
   const stateName = !hasService ? 'loading' : warning ? 'warning' : 'healthy';
   nodes.serviceStatus.dataset.state = stateName;
   nodes.serviceStatusText.textContent = !hasService ? '暂无数据' : warning ? '数据更新异常' : '数据正常';
-  nodes.lastSnapshot.textContent = health?.last_snapshot || '--';
-  const recentText = health?.last_recent_poll_at
-    ? `最近一次播放记录于 ${formatPlayTime(Date.parse(health.last_recent_poll_at))}。`
-    : '最近还没有捕获到播放记录。';
-  nodes.heroSubtitle.textContent = health?.last_snapshot
-    ? `账本更新至 ${health.last_snapshot}；${recentText}`
-    : '还没有可用快照；缺少的记录会标为数据不足，不会按 0 次展示。';
+  nodes.heroSubtitle.textContent = health?.last_recent_poll_at
+    ? `更新于 ${formatPlayTime(Date.parse(health.last_recent_poll_at))}`
+    : health?.last_snapshot ? `更新于 ${health.last_snapshot}` : '暂无数据';
 }
 
 function renderOverview(overview, health) {
@@ -385,6 +381,7 @@ function renderOverview(overview, health) {
     setMetricValue(nodes.metricSongs, '--');
     setMetricValue(nodes.metricDays, formatNumber(health.have_days));
     nodes.metricRange.textContent = '统计数据还在生成';
+    nodes.metricPlaysHint.hidden = false;
     nodes.metricPlaysHint.textContent = overview?.error ? `读取失败：${overview.error}` : getInsufficientText(overview, health.have_days);
     return;
   }
@@ -396,7 +393,9 @@ function renderOverview(overview, health) {
   setMetricValue(nodes.metricSongs, `${prefix}${formatNumber(overview.totals.distinct_songs)}`);
   setMetricValue(nodes.metricDays, `${prefix}${formatNumber(overview.totals.days_tracked)}`);
   nodes.metricRange.textContent = formatRange(overview.range);
-  nodes.metricPlaysHint.textContent = lowerBound ? '当前次数为最低估计；统计范围内存在不完整记录。' : '当前范围记录完整。';
+  nodes.metricPlaysHint.textContent = lowerBound ? '记录不完整' : '';
+  nodes.metricPlaysHint.hidden = !lowerBound;
+  nodes.metricPlays.title = lowerBound ? '≥ 表示已记录的最低次数' : '';
 }
 
 function rankingPic(item) {
@@ -408,7 +407,7 @@ function rankingPic(item) {
 function renderRanking(payload, health) {
   nodes.rankingList.replaceChildren();
   if (!payload || payload.error) {
-    nodes.rankingList.append(emptyState('排行读取失败', payload?.error || '本地排行接口没有返回结果。', { kind: 'error', iconName: 'triangle-alert' }));
+    nodes.rankingList.append(emptyState('排行读取失败', payload?.error || '请稍后重试', { kind: 'error', iconName: 'triangle-alert' }));
     return;
   }
   if (payload.insufficientData) {
@@ -418,7 +417,7 @@ function renderRanking(payload, health) {
   nodes.rankingRange.textContent = formatRange(payload.meta?.period_resolved);
   const items = payload.items || [];
   if (!items.length) {
-    nodes.rankingList.append(emptyState('无播放', '当前统计周期内没有新增的播放记录。'));
+    nodes.rankingList.append(emptyState('暂无播放记录', ''));
     return;
   }
 
@@ -503,12 +502,12 @@ function makeSongRow(item, { valueText = '', metaText = '' } = {}) {
 
 function renderRecent(payload) {
   if (!payload || payload.error) {
-    nodes.recentList.replaceChildren(emptyState('读取失败', payload?.error || '最近播放接口未返回结果。', { kind: 'error', iconName: 'triangle-alert' }));
+    nodes.recentList.replaceChildren(emptyState('读取失败', payload?.error || '请稍后重试', { kind: 'error', iconName: 'triangle-alert' }));
     return;
   }
   const items = payload.items || [];
   if (!items.length) {
-    nodes.recentList.replaceChildren(emptyState('无播放', '近期接口已连通，目前没有捕获到播放事件。'));
+    nodes.recentList.replaceChildren(emptyState('暂无最近播放', ''));
     return;
   }
   nodes.recentList.replaceChildren(...items.slice(0, 10).map((item) => makeSongRow(item, {
@@ -519,12 +518,12 @@ function renderRecent(payload) {
 
 function renderToday(payload) {
   if (!payload || payload.error) {
-    nodes.todayList.replaceChildren(emptyState('读取失败', payload?.error || '今日足迹接口未返回结果。', { kind: 'error', iconName: 'triangle-alert' }));
+    nodes.todayList.replaceChildren(emptyState('读取失败', payload?.error || '请稍后重试', { kind: 'error', iconName: 'triangle-alert' }));
     return;
   }
   const items = payload.items || [];
   if (!items.length) {
-    nodes.todayList.replaceChildren(emptyState('无播放', '今日视图已读取，目前没有歌曲记录。'));
+    nodes.todayList.replaceChildren(emptyState('今天暂无记录', ''));
     return;
   }
   nodes.todayList.replaceChildren(...items.slice(0, 10).map((item) => makeSongRow(item, {
@@ -565,7 +564,7 @@ function splitTrendSegments(points) {
 function renderTrend(payload, health) {
   nodes.trendChart.replaceChildren();
   if (!payload || payload.error) {
-    nodes.trendChart.append(emptyState('趋势读取失败', payload?.error || '本地趋势接口没有返回结果。', { kind: 'error', iconName: 'triangle-alert' }));
+    nodes.trendChart.append(emptyState('趋势读取失败', payload?.error || '请稍后重试', { kind: 'error', iconName: 'triangle-alert' }));
     return;
   }
   if (payload.insufficientData) {
@@ -574,11 +573,11 @@ function renderTrend(payload, health) {
   }
   const series = payload.series || [];
   if (!series.length) {
-    nodes.trendChart.append(emptyState('数据不足', '当前粒度还没有形成任何时间桶。', { kind: 'insufficient' }));
+    nodes.trendChart.append(emptyState('暂无数据', '', { kind: 'insufficient' }));
     return;
   }
   if (series.every((point) => !point.plays) && !series.some((point) => point.missing)) {
-    nodes.trendChart.append(emptyState('无播放', '当前趋势范围内没有新增播放记录。'));
+    nodes.trendChart.append(emptyState('暂无播放记录', ''));
     return;
   }
 
@@ -604,7 +603,7 @@ function renderTrend(payload, health) {
   const title = makeSvgElement('title', { id: 'trendSvgTitle' });
   title.textContent = '播放趋势直线分段面积图';
   const desc = makeSvgElement('desc', { id: 'trendSvgDesc' });
-  desc.textContent = '每个点为已记录播放量；虚线表示下界或进行中的周期。未知数据断线，底部斜纹标出空缺，不按零次绘制。';
+  desc.textContent = '每个点为已记录播放量；虚线仅表示进行中的周期，下界在数值中以 ≥ 标注。未知数据断线，底部斜纹标出空缺，不按零次绘制。';
   const defs = makeSvgElement('defs');
   const gradient = makeSvgElement('linearGradient', { id: 'trend-area-gradient', x1: 0, y1: 0, x2: 0, y2: 1 });
   gradient.append(makeSvgElement('stop', { offset: '0%', 'stop-color': '#1f40ed', 'stop-opacity': '.24' }), makeSvgElement('stop', { offset: '100%', 'stop-color': '#1f40ed', 'stop-opacity': '.015' }));
@@ -630,13 +629,13 @@ function renderTrend(payload, health) {
     for (let index = 1; index < segment.length; index += 1) {
       const previous = segment[index - 1];
       const point = segment[index];
-      const uncertain = previous.lower_bound || point.lower_bound || previous.is_current || point.is_current;
+      const inProgress = previous.is_current || point.is_current;
       const line = `M ${previous.x} ${previous.y} L ${point.x} ${point.y}`;
-      if (!uncertain) {
+      if (!inProgress) {
         const area = `M ${previous.x} ${baseline} L ${previous.x} ${previous.y} L ${point.x} ${point.y} L ${point.x} ${baseline} Z`;
         svg.append(makeSvgElement('path', { d: area, class: 'trend-area' }));
       }
-      svg.append(makeSvgElement('path', { d: line, class: `trend-line${uncertain ? ' is-lower-bound' : ''}` }));
+      svg.append(makeSvgElement('path', { d: line, class: `trend-line${inProgress ? ' is-current' : ''}` }));
     }
   }
 
@@ -650,7 +649,7 @@ function renderTrend(payload, health) {
         cx: point.x,
         cy: point.y,
         r: point.is_current ? 5 : 3.5,
-        class: `trend-point${point.lower_bound ? ' is-lower-bound' : ''}${point.is_current ? ' is-current' : ''}`,
+        class: `trend-point${point.is_current ? ' is-current' : ''}`,
         tabindex: 0,
         role: 'img',
         'aria-label': `${point.bucket}：${point.lower_bound ? '至少 ' : ''}${formatNumber(point.plays)} 次${point.has_gap ? '，记录不完整' : ''}${point.estimated ? '，日级归属不确定' : ''}${point.is_current ? '，进行中' : ''}`,
@@ -670,7 +669,7 @@ function renderTrend(payload, health) {
 
   const caption = document.createElement('figcaption');
   caption.className = 'trend-caption';
-  for (const [className, label] of [['legend-line', '已记录播放'], ['legend-current', '下界 / 进行中'], ['legend-gap', '数据未知（断线）']]) {
+  for (const [className, label] of [['legend-line', '已记录播放'], ['legend-current', '进行中'], ['legend-gap', '数据未知（断线）']]) {
     const item = document.createElement('span');
     const marker = document.createElement('i');
     marker.className = className;
@@ -688,19 +687,24 @@ function renderTrend(payload, health) {
     item.textContent = `${point.bucket} · ${point.missing ? '数据未知' : `${point.lower_bound ? '≥' : ''}${formatNumber(point.plays)}`}${point.has_gap ? ' · 记录不完整' : ''}${point.estimated ? ' · 日级归属不确定' : ''}${point.is_current ? ' · 进行中' : ''}`;
     textData.append(item);
   }
-  nodes.trendChart.append(figure, textData);
+  const details = document.createElement('details');
+  details.className = 'trend-details';
+  const summary = document.createElement('summary');
+  summary.textContent = '查看数据';
+  details.append(summary, textData);
+  nodes.trendChart.append(figure, details);
 }
 
 function renderHourlyActivity(payload) {
   nodes.hourlyHeatmap.replaceChildren();
   if (!payload || payload.error) {
-    nodes.hourlyHeatmap.append(emptyState('小时分布读取失败', payload?.error || '小时活跃度接口没有返回结果。', { kind: 'error', iconName: 'triangle-alert' }));
-    nodes.hourlyMeta.textContent = '读取失败；未知数据不会按 0 次展示';
+    nodes.hourlyHeatmap.append(emptyState('小时分布读取失败', payload?.error || '请稍后重试', { kind: 'error', iconName: 'triangle-alert' }));
+    nodes.hourlyMeta.textContent = '读取失败';
     return;
   }
   const buckets = payload.buckets || [];
   if (buckets.length !== 24) {
-    nodes.hourlyHeatmap.append(emptyState('数据不足', '接口未返回完整的 24 个小时桶。', { kind: 'insufficient' }));
+    nodes.hourlyHeatmap.append(emptyState('数据不足', '', { kind: 'insufficient' }));
     return;
   }
   const max = Math.max(...buckets.map((bucket) => bucket.plays || 0), 1);
@@ -732,8 +736,9 @@ function renderHourlyActivity(payload) {
     ? `；另有 ${formatNumber(meta.unlocated_plays)} 次播放只能统计到天，无法细分到小时`
     : '';
   const gap = meta.collection_gaps?.length ? `；存在 ${formatNumber(meta.collection_gaps.length)} 段记录不完整` : '';
-  nodes.hourlyMeta.textContent = `${qualityLabel}${formatRange(meta.range)} · ${formatNumber(meta.located_plays)} 次已定位播放${unlocated}${gap}`;
-  nodes.footerTimezone.textContent = `${meta.timezone || '本地时间'} / 不含今天`;
+  nodes.hourlyMeta.textContent = `${formatRange(meta.range)} · 不含今天`;
+  nodes.hourlyMeta.title = `${qualityLabel}${formatNumber(meta.located_plays)} 次已定位播放${unlocated}${gap}`;
+  nodes.footerTimezone.textContent = meta.timezone || '本地时间';
 }
 
 function renderPlaylistSelect(items) {
@@ -755,8 +760,8 @@ function renderPlaylistSelect(items) {
 
 function renderPlaylists(payload, allPayload = null) {
   if (!payload || payload.error) {
-    nodes.playlistList.replaceChildren(emptyState('歌单读取失败', payload?.error || '本地歌单接口没有返回结果。', { kind: 'error', iconName: 'triangle-alert' }));
-    nodes.playlistTracks.replaceChildren(emptyState('未选择歌单', '歌单读取成功后会显示曲目。', { kind: 'insufficient' }));
+    nodes.playlistList.replaceChildren(emptyState('歌单读取失败', payload?.error || '请稍后重试', { kind: 'error', iconName: 'triangle-alert' }));
+    nodes.playlistTracks.replaceChildren(emptyState('未选择歌单', '', { kind: 'insufficient' }));
     nodes.playlistCount.textContent = '--';
     return;
   }
@@ -765,8 +770,8 @@ function renderPlaylists(payload, allPayload = null) {
   mobilePlaylists = allItems;
   nodes.playlistCount.textContent = `${formatNumber(payload.total || items.length)} 份`;
   if (!items.length) {
-    nodes.playlistList.replaceChildren(emptyState('没有歌单', '本地账本中尚未保存任何歌单。'));
-    nodes.playlistTracks.replaceChildren(emptyState('未选择歌单', '没有可读取的曲目。', { kind: 'insufficient' }));
+    nodes.playlistList.replaceChildren(emptyState('暂无歌单', ''));
+    nodes.playlistTracks.replaceChildren(emptyState('暂无曲目', '', { kind: 'insufficient' }));
     renderPlaylistSelect([]);
     return;
   }
@@ -801,7 +806,7 @@ function renderPlaylistTracks(payload) {
   if (!payload || payload.error) {
     nodes.playlistTrackTitle.textContent = '曲目';
     nodes.trackCount.textContent = '--';
-    nodes.playlistTracks.replaceChildren(emptyState('曲目读取失败', payload?.error || '曲目接口没有返回结果。', { kind: 'error', iconName: 'triangle-alert' }));
+    nodes.playlistTracks.replaceChildren(emptyState('曲目读取失败', payload?.error || '请稍后重试', { kind: 'error', iconName: 'triangle-alert' }));
     return;
   }
   nodes.playlistTrackTitle.textContent = payload.playlist?.name || '曲目';
@@ -810,7 +815,7 @@ function renderPlaylistTracks(payload) {
     valueText: String(state.trackOffset + index + 1).padStart(2, '0'),
     metaText: songSubtitle(song),
   }));
-  nodes.playlistTracks.replaceChildren(...(rows.length ? rows : [emptyState('没有曲目', '这个歌单没有返回歌曲详情。')]));
+  nodes.playlistTracks.replaceChildren(...(rows.length ? rows : [emptyState('暂无曲目', '')]));
 }
 
 function renderPager(container, { offset = 0, pageSize = 0, total = 0, kind = '' } = {}) {
@@ -861,7 +866,7 @@ async function loadPlaylists() {
 
 async function loadPlaylistTracks() {
   if (!state.playlistId) {
-    nodes.playlistTracks.replaceChildren(emptyState('未选择歌单', '先从歌单索引中选择一项。', { kind: 'insufficient' }));
+    nodes.playlistTracks.replaceChildren(emptyState('请选择歌单', '', { kind: 'insufficient' }));
     renderPager(nodes.playlistTracksPager, { total: 0 });
     return;
   }
@@ -1040,6 +1045,5 @@ nodes.refreshButton.addEventListener('click', loadDashboard);
 const now = new Date();
 const localDate = [now.getFullYear(), String(now.getMonth() + 1).padStart(2, '0'), String(now.getDate()).padStart(2, '0')].join('-');
 nodes.dateWatermark.textContent = localDate;
-nodes.chapterWatermark.textContent = `CHRONO.${String(now.getMonth() + 1).padStart(2, '0')}`;
 renderMosaic();
 loadDashboard();

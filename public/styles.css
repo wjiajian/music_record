@@ -1192,12 +1192,8 @@ svg {
   vector-effect: non-scaling-stroke;
 }
 
-.trend-line.is-lower-bound {
+.trend-line.is-current {
   stroke-dasharray: 5 4;
-}
-
-.trend-point.is-lower-bound {
-  stroke-dasharray: 2 1;
 }
 
 .trend-point {
@@ -1707,3 +1703,6 @@ svg {
     transform: none !important;
   }
 }
+
+.trend-details { margin-top: 12px; color: var(--muted); font-size: 0.65rem; }
+.trend-details summary { cursor: pointer; }
