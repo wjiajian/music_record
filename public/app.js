@@ -212,6 +212,7 @@ function emptyState(title, text, { kind = 'empty', iconName = 'compass' } = {}) 
 }
 
 const coverGlowCache = new Map();
+const COVER_GLOW_CACHE_LIMIT = 256;
 
 function scheduleCoverGlow(image, target) {
   if (reducedMotion.matches) return;
@@ -220,8 +221,13 @@ function scheduleCoverGlow(image, target) {
     const key = image.currentSrc || image.src;
     if (coverGlowCache.has(key)) {
       const color = coverGlowCache.get(key);
+      coverGlowCache.delete(key);
+      coverGlowCache.set(key, color);
       if (color) target.style.setProperty('--cover-glow', color);
       return;
+    }
+    if (coverGlowCache.size >= COVER_GLOW_CACHE_LIMIT) {
+      coverGlowCache.delete(coverGlowCache.keys().next().value);
     }
     coverGlowCache.set(key, null);
     try {
@@ -229,7 +235,10 @@ function scheduleCoverGlow(image, target) {
       canvas.width = 10;
       canvas.height = 10;
       const context = canvas.getContext('2d', { willReadFrequently: true });
-      if (!context) return;
+      if (!context) {
+        coverGlowCache.delete(key);
+        return;
+      }
       context.drawImage(image, 0, 0, 10, 10);
       const pixels = context.getImageData(0, 0, 10, 10).data;
       let red = 0;
@@ -255,6 +264,7 @@ function scheduleCoverGlow(image, target) {
         target.style.setProperty('--cover-glow', color);
       }
     } catch {
+      coverGlowCache.delete(key);
       // 封面环境色只是渐进增强；像素不可读时保留钴蓝回退。
     }
   };

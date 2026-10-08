@@ -16,8 +16,10 @@ app.register(routes);
 
 async function sendPublic(reply, fileName, contentType) {
   const body = await fs.readFile(path.join(publicDir, fileName));
+  // HTML、脚本和样式使用固定 URL，每次使用前都需向服务器确认最新内容。
+  const revalidate = ['index.html', 'app.js', 'styles.css'].includes(fileName);
   return reply
-    .header('Cache-Control', fileName === 'index.html' ? 'no-cache' : 'public, max-age=3600, must-revalidate')
+    .header('Cache-Control', revalidate ? 'no-cache' : 'public, max-age=3600, must-revalidate')
     .type(contentType).send(body);
 }
 
