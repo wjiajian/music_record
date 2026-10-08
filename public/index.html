@@ -72,7 +72,7 @@
       </section>
 
       <section class="metrics-section" aria-labelledby="metricsTitle">
-        <div class="section-rail"><span>02</span><h2 id="metricsTitle">窗口概览</h2><p id="metricRange">等待统计范围</p></div>
+        <div class="section-rail"><h2 id="metricsTitle">窗口概览</h2><p id="metricRange">等待统计范围</p></div>
         <div class="metric-strip">
           <article class="metric-item"><span class="metric-label">播放</span><strong class="metric-value" id="metricPlays">--</strong><small id="metricPlaysHint" hidden></small></article>
           <article class="metric-item"><span class="metric-label"><svg aria-hidden="true"><use href="#icon-clock"></use></svg> 时长</span><strong class="metric-value" id="metricHours">--</strong><small>估算</small></article>
@@ -100,7 +100,7 @@
         <div class="analytics-grid">
           <article class="analysis-block" id="ranking">
             <div class="block-head">
-              <div><span class="block-index">A</span><h3>窗口排行</h3><p id="rankingRange">当前统计窗口</p></div>
+              <div><h3>窗口排行</h3><p id="rankingRange">当前统计窗口</p></div>
               <div class="segmented segmented--icons" role="group" aria-label="排行维度">
                 <button class="seg-button is-active" type="button" data-dimension="song" aria-pressed="true"><svg aria-hidden="true"><use href="#icon-music"></use></svg>歌曲</button><button class="seg-button" type="button" data-dimension="artist" aria-pressed="false"><svg aria-hidden="true"><use href="#icon-mic2"></use></svg>歌手</button><button class="seg-button" type="button" data-dimension="album" aria-pressed="false"><svg aria-hidden="true"><use href="#icon-layers"></use></svg>专辑</button>
               </div>
@@ -110,7 +110,7 @@
 
           <article class="analysis-block analysis-block--trend" id="trend">
             <div class="block-head">
-              <div><span class="block-index">B</span><h3>播放趋势</h3><p id="trendRange">最近 30 天</p></div>
+              <div><h3>播放趋势</h3><p id="trendRange">最近 30 天</p></div>
               <div class="segmented" role="group" aria-label="趋势周期；同时控制播放趋势与窗口排行" title="同时切换排行周期"><button class="seg-button is-active" type="button" data-granularity="day" aria-pressed="true">日</button><button class="seg-button" type="button" data-granularity="week" aria-pressed="false">周</button><button class="seg-button" type="button" data-granularity="month" aria-pressed="false">月</button></div>
             </div>
             <div class="trend-chart" id="trendChart" aria-live="polite"></div>

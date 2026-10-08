@@ -180,3 +180,105 @@ test('图标使用本地 Lucide SVG sprite，不再用字符充当控件图标',
   assert.match(html, /rel="apple-touch-icon" href="\/logo\.png"/);
   assert.doesNotMatch(`${html}\n${source}`, /↻|‹|›/);
 });
+
+test('空日期只合并连续且状态相同的日期，保留有歌曲的行', () => {
+  const start = source.indexOf('function groupMosaicDays');
+  const end = source.indexOf('function renderMosaic', start);
+  const group = vm.runInNewContext(`${source.slice(start, end)}; groupMosaicDays`);
+  const items = [
+    { date: '2026-10-08', songs: [{}] },
+    { date: '2026-10-07', reason: 'gap', songs: [] },
+    { date: '2026-10-06', reason: 'gap', songs: [] },
+    { date: '2026-10-05', reason: 'empty', songs: [] },
+    { date: '2026-10-03', reason: 'empty', songs: [] },
+  ];
+  const result = group(items);
+  assert.equal(result.length, 4);
+  assert.equal(result[0].songs.length, 1);
+  assert.equal(result[1].days.length, 2);
+  assert.equal(result[2].reason, 'empty');
+  assert.equal(items[1].days, undefined);
+});
+
+test('同一封面只取色一次，减少动态效果时不安排取色', () => {
+  let reads = 0;
+  const pending = [];
+  const reducedMotion = { matches: false };
+  const start = source.indexOf('const coverGlowCache');
+  const end = source.indexOf('function createCoverMedia', start);
+  const schedule = vm.runInNewContext(`${source.slice(start, end)}; scheduleCoverGlow`, {
+    reducedMotion,
+    window: { requestIdleCallback: (fn) => pending.push(fn) },
+    document: { createElement: () => ({ getContext: () => ({
+      drawImage() {},
+      getImageData() { reads++; return { data: [100, 80, 60, 255] }; },
+    }) }) },
+  });
+  const colors = [];
+  const target = { style: { setProperty: (_name, value) => colors.push(value) } };
+  schedule({ src: '/cover/a' }, target);
+  schedule({ src: '/cover/a' }, target);
+  pending.splice(0).forEach((fn) => fn());
+  assert.equal(reads, 1);
+  assert.equal(colors.length, 2);
+  assert.equal(colors[0], colors[1]);
+  reducedMotion.matches = true;
+  schedule({ src: '/cover/b' }, target);
+  assert.equal(pending.length, 0);
+});
+
+function glowHarness(getContext) {
+  const start = source.indexOf('const coverGlowCache');
+  const end = source.indexOf('function createCoverMedia', start);
+  return vm.runInNewContext(`${source.slice(start, end)}; ({ scheduleCoverGlow, coverGlowCache, limit: COVER_GLOW_CACHE_LIMIT })`, {
+    reducedMotion: { matches: false },
+    window: { requestIdleCallback: (fn) => fn() },
+    document: { createElement: () => ({ getContext }) },
+  });
+}
+
+test('canvas 不可用或取色抛错后，同一 URL 可以重试', () => {
+  for (const failure of ['context', 'pixels']) {
+    let attempts = 0;
+    const colors = [];
+    const { scheduleCoverGlow, coverGlowCache } = glowHarness(() => {
+      attempts++;
+      if (attempts === 1 && failure === 'context') return null;
+      return {
+        drawImage() {},
+        getImageData() {
+          if (attempts === 1) throw new Error('temporary failure');
+          return { data: [100, 80, 60, 255] };
+        },
+      };
+    });
+    const image = { src: '/cover/retry' };
+    const target = { style: { setProperty: (_key, color) => colors.push(color) } };
+    scheduleCoverGlow(image, target);
+    assert.equal(coverGlowCache.has(image.src), false);
+    scheduleCoverGlow(image, target);
+    assert.equal(attempts, 2);
+    assert.equal(colors.length, 1);
+    assert.equal(coverGlowCache.has(image.src), true);
+  }
+});
+
+test('光晕缓存有固定上限，并淘汰最久未使用的封面', () => {
+  let reads = 0;
+  const { scheduleCoverGlow, coverGlowCache, limit } = glowHarness(() => ({
+    drawImage() {},
+    getImageData() { reads++; return { data: [100, 80, 60, 255] }; },
+  }));
+  const target = { style: { setProperty() {} } };
+  const visit = (id) => scheduleCoverGlow({ src: `/cover/${id}` }, target);
+  for (let id = 0; id < limit; id++) visit(id);
+  visit(0);
+  assert.equal(reads, limit);
+  visit(limit);
+  assert.equal(coverGlowCache.size, limit);
+  assert.equal(coverGlowCache.has('/cover/0'), true);
+  assert.equal(coverGlowCache.has('/cover/1'), false);
+  visit(1);
+  assert.equal(reads, limit + 2);
+  assert.equal(coverGlowCache.size, limit);
+});
