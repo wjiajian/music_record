@@ -492,6 +492,25 @@ svg {
   min-width: 0;
 }
 
+.mosaic-row.is-summary {
+  display: flex;
+  gap: 12px;
+  min-height: 30px;
+  padding: 4px 0;
+}
+
+.mosaic-row.is-summary::after {
+  content: "";
+  flex: 1;
+  border-top: 1px solid var(--line);
+}
+
+.mosaic-summary-text {
+  color: var(--muted);
+  font-size: 0.7rem;
+  line-height: 1.5;
+}
+
 .mosaic-row__meta {
   display: grid;
   gap: 3px;
@@ -689,14 +708,6 @@ svg {
 .section-rail {
   padding: 34px 28px 34px 0;
   border-right: 1px solid var(--line);
-}
-
-.section-rail > span,
-.block-index {
-  color: var(--cobalt);
-  font-family: var(--mono);
-  font-size: 0.66rem;
-  font-weight: 700;
 }
 
 .section-rail h2 {

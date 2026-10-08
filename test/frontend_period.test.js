@@ -180,3 +180,49 @@ test('图标使用本地 Lucide SVG sprite，不再用字符充当控件图标',
   assert.match(html, /rel="apple-touch-icon" href="\/logo\.png"/);
   assert.doesNotMatch(`${html}\n${source}`, /↻|‹|›/);
 });
+
+test('空日期只合并连续且状态相同的日期，保留有歌曲的行', () => {
+  const start = source.indexOf('function groupMosaicDays');
+  const end = source.indexOf('function renderMosaic', start);
+  const group = vm.runInNewContext(`${source.slice(start, end)}; groupMosaicDays`);
+  const items = [
+    { date: '2026-10-08', songs: [{}] },
+    { date: '2026-10-07', reason: 'gap', songs: [] },
+    { date: '2026-10-06', reason: 'gap', songs: [] },
+    { date: '2026-10-05', reason: 'empty', songs: [] },
+    { date: '2026-10-03', reason: 'empty', songs: [] },
+  ];
+  const result = group(items);
+  assert.equal(result.length, 4);
+  assert.equal(result[0].songs.length, 1);
+  assert.equal(result[1].days.length, 2);
+  assert.equal(result[2].reason, 'empty');
+  assert.equal(items[1].days, undefined);
+});
+
+test('同一封面只取色一次，减少动态效果时不安排取色', () => {
+  let reads = 0;
+  const pending = [];
+  const reducedMotion = { matches: false };
+  const start = source.indexOf('const coverGlowCache');
+  const end = source.indexOf('function createCoverMedia', start);
+  const schedule = vm.runInNewContext(`${source.slice(start, end)}; scheduleCoverGlow`, {
+    reducedMotion,
+    window: { requestIdleCallback: (fn) => pending.push(fn) },
+    document: { createElement: () => ({ getContext: () => ({
+      drawImage() {},
+      getImageData() { reads++; return { data: [100, 80, 60, 255] }; },
+    }) }) },
+  });
+  const colors = [];
+  const target = { style: { setProperty: (_name, value) => colors.push(value) } };
+  schedule({ src: '/cover/a' }, target);
+  schedule({ src: '/cover/a' }, target);
+  pending.splice(0).forEach((fn) => fn());
+  assert.equal(reads, 1);
+  assert.equal(colors.length, 2);
+  assert.equal(colors[0], colors[1]);
+  reducedMotion.matches = true;
+  schedule({ src: '/cover/b' }, target);
+  assert.equal(pending.length, 0);
+});

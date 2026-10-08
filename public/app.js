@@ -211,8 +211,19 @@ function emptyState(title, text, { kind = 'empty', iconName = 'compass' } = {}) 
   return wrap;
 }
 
+const coverGlowCache = new Map();
+
 function scheduleCoverGlow(image, target) {
+  if (reducedMotion.matches) return;
   const extract = () => {
+    if (reducedMotion.matches) return;
+    const key = image.currentSrc || image.src;
+    if (coverGlowCache.has(key)) {
+      const color = coverGlowCache.get(key);
+      if (color) target.style.setProperty('--cover-glow', color);
+      return;
+    }
+    coverGlowCache.set(key, null);
     try {
       const canvas = document.createElement('canvas');
       canvas.width = 10;
@@ -239,10 +250,9 @@ function scheduleCoverGlow(image, target) {
         weight += pixelWeight;
       }
       if (weight) {
-        target.style.setProperty(
-          '--cover-glow',
-          `rgba(${Math.round(red / weight)}, ${Math.round(green / weight)}, ${Math.round(blue / weight)}, .28)`
-        );
+        const color = `rgba(${Math.round(red / weight)}, ${Math.round(green / weight)}, ${Math.round(blue / weight)}, .28)`;
+        coverGlowCache.set(key, color);
+        target.style.setProperty('--cover-glow', color);
       }
     } catch {
       // 封面环境色只是渐进增强；像素不可读时保留钴蓝回退。
@@ -287,6 +297,22 @@ function missingDailyTopText(reason) {
   return '这一天没有听歌记录。';
 }
 
+function groupMosaicDays(items) {
+  const groups = [];
+  for (const item of items) {
+    const previous = groups.at(-1);
+    const previousDay = previous?.days.at(-1);
+    const consecutive = previousDay && Date.parse(previousDay.date) - Date.parse(item.date) === 86400000;
+    if (!item.songs?.length && previous && !previous.songs?.length
+        && previous.reason === item.reason && consecutive) {
+      previous.days.push(item);
+    } else {
+      groups.push({ ...item, days: [item] });
+    }
+  }
+  return groups;
+}
+
 function renderMosaic(payload = null) {
   const source = payload?.items || [];
   const today = new Date();
@@ -304,7 +330,7 @@ function renderMosaic(payload = null) {
     };
   });
 
-  const rows = items.map((item) => {
+  const rows = groupMosaicDays(items).map((item) => {
     const row = document.createElement('div');
     row.className = 'mosaic-row';
     if (item.reason === 'gap') row.classList.add('is-gap');
@@ -320,6 +346,20 @@ function renderMosaic(payload = null) {
       ? `${lowerBound}${formatNumber(item.plays)} 次 / ${formatNumber(item.distinct_songs)} 首`
       : item.reason === 'gap' ? '数据中断' : item.reason === 'insufficient' ? '尚未形成' : '暂无记录';
     meta.append(date, count);
+
+    if (!item.songs?.length) {
+      row.classList.add('is-summary');
+      const lastDay = item.days.at(-1).date;
+      const range = item.days.length > 1
+        ? `${lastDay.slice(5).replace('-', '.')}–${item.date.slice(5).replace('-', '.')}`
+        : date.textContent;
+      const summary = document.createElement('span');
+      summary.className = 'mosaic-summary-text';
+      summary.textContent = `${range} · ${item.days.length} 天${count.textContent}`;
+      summary.title = item.days.map((day) => `${day.date}：${missingDailyTopText(day.reason)}`).join('\n');
+      row.append(summary);
+      return row;
+    }
 
     const groove = document.createElement('div');
     groove.className = 'mosaic-groove';
