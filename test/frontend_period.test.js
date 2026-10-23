@@ -7,26 +7,23 @@ const source = fs.readFileSync(new URL('../public/app.js', import.meta.url), 'ut
 const html = fs.readFileSync(new URL('../public/index.html', import.meta.url), 'utf8');
 const css = fs.readFileSync(new URL('../public/styles.css', import.meta.url), 'utf8');
 
-test('统计窗口切换同时重置概览与排行周期，不重载趋势、封面墙、实时流或歌单', () => {
+test('统计窗口切换同时刷新概览与排行，不重载趋势、封面墙、最近播放或歌单', () => {
   const handlerStart = source.indexOf("const windowButton = event.target.closest('[data-window]')");
   const handlerEnd = source.indexOf("const dimension = event.target.closest('[data-dimension]')");
   const handler = source.slice(handlerStart, handlerEnd);
   assert.match(handler, /state\.window = windowButton\.dataset\.window/);
-  assert.match(handler, /state\.rankingPeriod = state\.window/);
   assert.match(handler, /loadWindowData\(\)/);
   assert.doesNotMatch(handler, /loadDashboard\(\)|loadTrend\(\)|renderMosaic/);
 
   const loaderStart = source.indexOf('async function loadWindowData()');
   const loaderEnd = source.indexOf('// 排行维度', loaderStart);
   const loader = source.slice(loaderStart, loaderEnd);
-  assert.match(loader, /\/api\/overview/);
-  assert.match(loader, /\/api\/ranking/);
   assert.match(loader, /\/api\/overview[\s\S]*period: state\.window/);
-  assert.match(loader, /\/api\/ranking[\s\S]*period: state\.rankingPeriod/);
+  assert.match(loader, /\/api\/ranking[\s\S]*period: state\.window/);
   assert.doesNotMatch(loader, /\/api\/trend|daily-top-songs|record\/recent|listen\/data\/today|\/api\/playlists/);
 });
 
-test('排行维度切换只请求当前排行周期的本地 ranking 接口', () => {
+test('排行维度切换只请求当前统计窗口的本地 ranking 接口', () => {
   const handlerStart = source.indexOf("const dimension = event.target.closest('[data-dimension]')");
   const handlerEnd = source.indexOf("const granularity = event.target.closest('[data-granularity]')");
   const handler = source.slice(handlerStart, handlerEnd);
@@ -37,19 +34,17 @@ test('排行维度切换只请求当前排行周期的本地 ranking 接口', ()
   const loaderEnd = source.indexOf('async function loadTrend()', loaderStart);
   const loader = source.slice(loaderStart, loaderEnd);
   assert.match(loader, /\/api\/ranking/);
-  assert.match(loader, /period: state\.rankingPeriod/);
+  assert.match(loader, /period: state\.window/);
   assert.doesNotMatch(loader, /record\/recent|listen\/data\/today|\/api\/trend|loadDashboard/);
 });
 
-test('趋势周期切换同时刷新对应周期排行，不改变统计窗口或其它区域', () => {
+test('趋势周期切换只刷新趋势图，不影响排行或统计窗口', () => {
   const handlerStart = source.indexOf("const granularity = event.target.closest('[data-granularity]')");
   const handlerEnd = source.indexOf("const pager = event.target.closest('[data-pager]')");
   const handler = source.slice(handlerStart, handlerEnd);
   assert.match(handler, /state\.granularity = granularity\.dataset\.granularity/);
-  assert.match(handler, /state\.rankingPeriod = state\.granularity/);
   assert.match(handler, /loadTrend\(\)/);
-  assert.match(handler, /loadRanking\(\)/);
-  assert.doesNotMatch(handler, /state\.window\s*=|loadWindowData\(\)|loadDashboard\(\)/);
+  assert.doesNotMatch(handler, /loadRanking\(\)|state\.window\s*=|loadWindowData\(\)|loadDashboard\(\)/);
 
   const loaderStart = source.indexOf('async function loadTrend()');
   const loaderEnd = source.indexOf('async function loadDashboard()', loaderStart);
@@ -61,13 +56,14 @@ test('趋势周期切换同时刷新对应周期排行，不改变统计窗口�
   const dashboardStart = source.indexOf('async function loadDashboard()');
   const dashboardEnd = source.indexOf("document.addEventListener('click'", dashboardStart);
   const dashboard = source.slice(dashboardStart, dashboardEnd);
-  assert.match(dashboard, /\/api\/ranking[\s\S]*period: state\.rankingPeriod/);
+  assert.match(dashboard, /\/api\/ranking[\s\S]*period: state\.window/);
+  assert.doesNotMatch(source, /rankingPeriod|listen\/data\/today/);
 });
 
-test('页面说明准确描述统计窗口与趋势周期的联动范围', () => {
-  assert.match(html, /title="同时切换排行周期"/);
-  assert.match(html, /aria-label="趋势周期；同时控制播放趋势与窗口排行"/);
-  assert.doesNotMatch(html, /统计窗口可联动排行与趋势/);
+test('页面说明准确描述统计窗口与趋势周期的作用范围', () => {
+  assert.match(html, /aria-label="统计窗口；同时控制概览与排行"/);
+  assert.match(html, /aria-label="趋势周期"/);
+  assert.doesNotMatch(html, /同时切换排行周期|统计窗口可联动排行与趋势/);
 });
 
 test('趋势使用直线分段面积图，在未知空桶中断并标记当前桶', () => {
@@ -86,7 +82,7 @@ test('趋势使用直线分段面积图，在未知空桶中断并标记当前�
 
 test('趋势分段保留有记录的缺口桶与真实零值，只在未知空桶断线', () => {
   const start = source.indexOf('function splitTrendSegments');
-  const end = source.indexOf('function renderTrend', start);
+  const end = source.indexOf('function describeTrend', start);
   const split = vm.runInNewContext(`${source.slice(start, end)}; splitTrendSegments`);
   const points = [
     { bucket: 'a', plays: 10 },
@@ -98,24 +94,16 @@ test('趋势分段保留有记录的缺口桶与真实零值，只在未知空�
   assert.deepEqual(JSON.parse(JSON.stringify(split(points))), [points.slice(0, 3), points.slice(4)]);
 });
 
-test('顶部栏向下滚动自动隐藏，向上滚动或靠近顶部时恢复', () => {
-  assert.match(source, /function updateTopbarOnScroll/);
-  assert.match(source, /window\.addEventListener\('scroll', scheduleTopbarUpdate/);
-  assert.match(source, /event\.clientY <= TOPBAR_REVEAL_ZONE/);
-  assert.match(source, /nodes\.topbar\.classList\.add\('is-hidden'\)/);
-
-  const hiddenRule = css.slice(css.indexOf('.topbar.is-hidden'), css.indexOf('.topbar__inner'));
-  assert.match(hiddenRule, /translateY/);
-  assert.match(hiddenRule, /pointer-events: none/);
-
-  const innerRule = css.slice(css.indexOf('.topbar__inner'), css.indexOf('.brand {'));
-  assert.match(innerRule, /border-radius: 12px/);
+test('顶部栏常驻吸顶，不再随滚动隐藏', () => {
+  assert.doesNotMatch(source, /updateTopbarOnScroll|scheduleTopbarUpdate|is-hidden/);
+  const topbarRule = css.slice(css.indexOf('.topbar {'), css.indexOf('.topbar__inner'));
+  assert.match(topbarRule, /position: sticky/);
 });
 
-test('最近播放与今日足迹共用圆形封面，且不显示更新时间', () => {
-  assert.doesNotMatch(html, /recentFreshness|todayFreshness|crystal-list/);
-  assert.doesNotMatch(source, /recentFreshness|todayFreshness/);
-  assert.match(css, /\.song-row__art,[\s\S]*?border-radius: 50%/);
+test('最近播放与今日足迹合并为一份带时间的列表', () => {
+  assert.doesNotMatch(html, /todayList|recentFreshness|todayFreshness|crystal-list/);
+  assert.doesNotMatch(source, /renderToday|recentFreshness|todayFreshness/);
+  assert.match(source, /song-row--timed/);
   assert.doesNotMatch(css, /\.crystal-list/);
 });
 
@@ -130,10 +118,10 @@ test('健康状态与最近播放文案覆盖无数据和无最近记录场景',
   assert.doesNotMatch(renderer, /尚未捕获.*记录/);
 });
 
-test('趋势横纵坐标使用更大、更轻的正文数字', () => {
+test('趋势坐标使用等宽小字，且不描边', () => {
   const axisRule = css.slice(css.indexOf('.trend-axis-label'), css.indexOf('.trend-current-line'));
-  assert.match(axisRule, /font-family: var\(--body\)/);
-  assert.match(axisRule, /font-size: 12\.5px/);
+  assert.match(axisRule, /font-family: var\(--mono\)/);
+  assert.match(axisRule, /font-size: 12px/);
   assert.match(axisRule, /font-weight: 400/);
   assert.match(axisRule, /stroke: none/);
   assert.match(source, /'dominant-baseline': 'middle'/);
@@ -145,20 +133,20 @@ test('封面区移除中文标题，并彻底移除系统诊断区', () => {
   assert.doesNotMatch(css, /\.diagnostics/);
 });
 
-test('封面统一走本站缓存、渐进加载与局部环境色增强', () => {
+test('封面统一走本站缓存与渐进加载，不再做取色光晕', () => {
   assert.match(source, /function cachedCoverUrl/);
   assert.match(source, /function createCoverMedia/);
-  assert.match(source, /function scheduleCoverGlow/);
   assert.match(source, /image\.loading = 'lazy'/);
-  assert.ok((source.match(/createCoverMedia\(/g) || []).length >= 5);
+  assert.ok((source.match(/createCoverMedia\(/g) || []).length >= 4);
   assert.match(source, /\/api\/cover\?url=/);
-  assert.match(css, /cover-shimmer/);
-  assert.match(css, /--cover-glow/);
+  assert.doesNotMatch(source, /scheduleCoverGlow|coverGlowCache/);
+  assert.doesNotMatch(css, /--cover-glow|cover-shimmer/);
+  assert.match(source, /const MOSAIC_COLUMNS = 4/);
 });
 
 test('小时活跃度呈现 24 个可键盘聚焦且带准确文本的桶', () => {
   const start = source.indexOf('function renderHourlyActivity');
-  const end = source.indexOf('function renderPlaylistSelect', start);
+  const end = source.indexOf('function renderPlaylists', start);
   const renderer = source.slice(start, end);
   assert.match(renderer, /buckets\.length !== 24/);
   assert.match(renderer, /cell\.type = 'button'/);
@@ -174,11 +162,11 @@ test('小时活跃度呈现 24 个可键盘聚焦且带准确文本的桶', () =
 test('图标使用本地 Lucide SVG sprite，不再用字符充当控件图标', () => {
   assert.match(html, /data-lucide-version="0\.468\.0"/);
   assert.match(html, /id="icon-rotate-cw"/);
-  assert.match(html, /id="icon-disc3"/);
-  assert.match(html, /class="brand__mark" src="\/logo\.png"/);
   assert.match(html, /rel="icon"[^>]+href="\/favicon\.png"/);
   assert.match(html, /rel="apple-touch-icon" href="\/logo\.png"/);
   assert.doesNotMatch(`${html}\n${source}`, /↻|‹|›/);
+  // 生产环境不依赖 Google Fonts（国内不可达）。
+  assert.doesNotMatch(`${html}\n${css}`, /fonts\.googleapis\.com/);
 });
 
 test('空日期只合并连续且状态相同的日期，保留有歌曲的行', () => {
@@ -200,85 +188,16 @@ test('空日期只合并连续且状态相同的日期，保留有歌曲的行',
   assert.equal(items[1].days, undefined);
 });
 
-test('同一封面只取色一次，减少动态效果时不安排取色', () => {
-  let reads = 0;
-  const pending = [];
-  const reducedMotion = { matches: false };
-  const start = source.indexOf('const coverGlowCache');
-  const end = source.indexOf('function createCoverMedia', start);
-  const schedule = vm.runInNewContext(`${source.slice(start, end)}; scheduleCoverGlow`, {
-    reducedMotion,
-    window: { requestIdleCallback: (fn) => pending.push(fn) },
-    document: { createElement: () => ({ getContext: () => ({
-      drawImage() {},
-      getImageData() { reads++; return { data: [100, 80, 60, 255] }; },
-    }) }) },
+test('标题日期使用中文数字', () => {
+  const start = source.indexOf('function chineseNumber');
+  const end = source.indexOf('function toLocalDate', start);
+  const chineseNumber = vm.runInNewContext(`${source.slice(start, end)}; chineseNumber`, {
+    CN_DIGITS: ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十'],
   });
-  const colors = [];
-  const target = { style: { setProperty: (_name, value) => colors.push(value) } };
-  schedule({ src: '/cover/a' }, target);
-  schedule({ src: '/cover/a' }, target);
-  pending.splice(0).forEach((fn) => fn());
-  assert.equal(reads, 1);
-  assert.equal(colors.length, 2);
-  assert.equal(colors[0], colors[1]);
-  reducedMotion.matches = true;
-  schedule({ src: '/cover/b' }, target);
-  assert.equal(pending.length, 0);
-});
-
-function glowHarness(getContext) {
-  const start = source.indexOf('const coverGlowCache');
-  const end = source.indexOf('function createCoverMedia', start);
-  return vm.runInNewContext(`${source.slice(start, end)}; ({ scheduleCoverGlow, coverGlowCache, limit: COVER_GLOW_CACHE_LIMIT })`, {
-    reducedMotion: { matches: false },
-    window: { requestIdleCallback: (fn) => fn() },
-    document: { createElement: () => ({ getContext }) },
-  });
-}
-
-test('canvas 不可用或取色抛错后，同一 URL 可以重试', () => {
-  for (const failure of ['context', 'pixels']) {
-    let attempts = 0;
-    const colors = [];
-    const { scheduleCoverGlow, coverGlowCache } = glowHarness(() => {
-      attempts++;
-      if (attempts === 1 && failure === 'context') return null;
-      return {
-        drawImage() {},
-        getImageData() {
-          if (attempts === 1) throw new Error('temporary failure');
-          return { data: [100, 80, 60, 255] };
-        },
-      };
-    });
-    const image = { src: '/cover/retry' };
-    const target = { style: { setProperty: (_key, color) => colors.push(color) } };
-    scheduleCoverGlow(image, target);
-    assert.equal(coverGlowCache.has(image.src), false);
-    scheduleCoverGlow(image, target);
-    assert.equal(attempts, 2);
-    assert.equal(colors.length, 1);
-    assert.equal(coverGlowCache.has(image.src), true);
-  }
-});
-
-test('光晕缓存有固定上限，并淘汰最久未使用的封面', () => {
-  let reads = 0;
-  const { scheduleCoverGlow, coverGlowCache, limit } = glowHarness(() => ({
-    drawImage() {},
-    getImageData() { reads++; return { data: [100, 80, 60, 255] }; },
-  }));
-  const target = { style: { setProperty() {} } };
-  const visit = (id) => scheduleCoverGlow({ src: `/cover/${id}` }, target);
-  for (let id = 0; id < limit; id++) visit(id);
-  visit(0);
-  assert.equal(reads, limit);
-  visit(limit);
-  assert.equal(coverGlowCache.size, limit);
-  assert.equal(coverGlowCache.has('/cover/0'), true);
-  assert.equal(coverGlowCache.has('/cover/1'), false);
-  visit(1);
-  assert.equal(reads, limit + 2);
-  assert.equal(coverGlowCache.size, limit);
+  assert.equal(chineseNumber(3), '三');
+  assert.equal(chineseNumber(10), '十');
+  assert.equal(chineseNumber(12), '十二');
+  assert.equal(chineseNumber(20), '二十');
+  assert.equal(chineseNumber(23), '二十三');
+  assert.equal(chineseNumber(31), '三十一');
 });
