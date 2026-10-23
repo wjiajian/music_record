@@ -4,8 +4,8 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="theme-color" content="#f9f8f5">
-    <meta name="description" content="Music Record 个人听歌账本：按本地时间观察播放、排行、趋势与歌单。">
-    <title>声波时间账本</title>
+    <meta name="description" content="音乐记录：按本地时间观察播放、排行、趋势与歌单。">
+    <title>音乐记录</title>
     <link rel="icon" type="image/png" href="/favicon.png">
     <link rel="apple-touch-icon" href="/logo.png">
     <link rel="stylesheet" href="/styles.css">
@@ -25,9 +25,8 @@
 
     <header class="topbar">
       <div class="topbar__inner">
-        <a class="brand" href="#overview" aria-label="声波时间账本首页">
-          <span class="brand__name">声波时间账本</span>
-          <span class="brand__latin">music record</span>
+        <a class="brand" href="#overview" aria-label="音乐记录首页">
+          <span class="brand__name">音乐记录</span>
         </a>
         <nav class="nav-links" aria-label="页面导航"><a href="#overview">今天</a><a href="#trend">趋势</a><a href="#covers">封面</a><a href="#playlists">歌单</a></nav>
       </div>
@@ -38,7 +37,6 @@
         <div class="hero__copy">
           <p class="service-status" id="serviceStatus" data-state="loading"><span class="status-dot" aria-hidden="true"></span><span id="serviceStatusText">正在读取</span><span id="heroSubtitle"></span></p>
           <h1 id="pageTitle"><time id="heroDate"></time></h1>
-          <p class="hero__summary" id="heroSummary">正在读取统计…</p>
         </div>
         <div class="hero__controls">
           <div class="segmented" role="group" aria-label="统计窗口；同时控制概览与排行">
@@ -82,7 +80,6 @@
             <button class="tab is-active" type="button" data-granularity="day" aria-pressed="true">按日</button><button class="tab" type="button" data-granularity="week" aria-pressed="false">按周</button><button class="tab" type="button" data-granularity="month" aria-pressed="false">按月</button>
           </div>
         </div>
-        <p class="block-lede" id="trendSummary"></p>
         <div class="trend-chart" id="trendChart" aria-live="polite"></div>
         <p class="detail-line" id="trendDetail" aria-live="polite"></p>
         <div class="hourly">
@@ -95,7 +92,7 @@
       <section class="block" id="covers" aria-labelledby="coversTitle">
         <div class="block-head">
           <h2 id="coversTitle">这一周的封面</h2>
-          <span class="block-note">每天播放最多的四首</span>
+          <span class="block-note">每天播放最多的十首</span>
         </div>
         <ol class="mosaic" id="mosaic" aria-label="最近七天每日听过的歌曲封面"></ol>
         <p class="detail-line" id="mosaicDetail" aria-live="polite"></p>
@@ -107,12 +104,16 @@
           <h2 id="playlistsTitle">歌单</h2>
           <span class="block-note" id="playlistCount">--</span>
         </div>
-        <div class="playlist-list" id="playlistList" aria-live="polite"></div>
-        <div class="pager" id="playlistPager" hidden></div>
-        <div class="tracks">
-          <div class="tracks__head"><h3 id="playlistTrackTitle">曲目</h3><span id="trackCount">--</span></div>
-          <ol class="track-list" id="playlistTracks" aria-live="polite"></ol>
-          <div class="pager" id="playlistTracksPager" hidden></div>
+        <div class="playlist-layout">
+          <div class="playlist-index">
+            <div class="playlist-list" id="playlistList" aria-live="polite"></div>
+            <div class="pager" id="playlistPager" hidden></div>
+          </div>
+          <div class="tracks">
+            <div class="tracks__head"><h3 id="playlistTrackTitle">曲目</h3><span id="trackCount">--</span></div>
+            <ol class="track-list" id="playlistTracks" aria-live="polite"></ol>
+            <div class="pager" id="playlistTracksPager" hidden></div>
+          </div>
         </div>
       </section>
     </main>

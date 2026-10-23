@@ -144,11 +144,6 @@ svg {
   line-height: 1.4;
 }
 
-.brand__latin {
-  color: var(--n-7);
-  font-family: var(--mono);
-  font-size: 12px;
-}
 
 .nav-links {
   display: flex;
@@ -239,12 +234,6 @@ svg {
   line-height: 1.17;
 }
 
-.hero__summary {
-  max-width: 34em;
-  color: var(--n-8);
-  font-size: 16px;
-  line-height: 1.625;
-}
 
 .hero__controls {
   display: flex;
@@ -421,14 +410,7 @@ svg {
   display: none;
 }
 
-.block-lede {
-  max-width: 40em;
-  color: var(--n-8);
-}
 
-.block-lede:empty {
-  display: none;
-}
 
 .tabs {
   display: flex;
@@ -499,7 +481,7 @@ svg {
 }
 
 .song-row--timed {
-  grid-template-columns: 76px minmax(0, 1fr);
+  grid-template-columns: 76px 36px minmax(0, 1fr);
 }
 
 .rank-index,
@@ -919,6 +901,14 @@ svg {
 
 /* 歌单 */
 
+/* 左侧歌单索引，右侧曲目。 */
+.playlist-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  align-items: start;
+  gap: 32px;
+}
+
 .playlist-list {
   display: flex;
   flex-direction: column;
@@ -969,7 +959,6 @@ svg {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  margin-top: 32px;
   padding: 20px 24px 12px;
   border-radius: 8px;
   background: var(--n-2);
@@ -1101,7 +1090,12 @@ svg {
 
   .mosaic-covers {
     display: grid;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+  }
+
+  .playlist-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
   }
 
   .mosaic-cover,

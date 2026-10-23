@@ -16,22 +16,19 @@ let lastTrend = null;
 const PLAYLIST_PAGE_SIZE = 10;
 const TRACK_PAGE_SIZE = 10;
 const MOSAIC_DAYS = 7;
-const MOSAIC_COLUMNS = 4;
+const MOSAIC_COLUMNS = 10;
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const numberFormat = new Intl.NumberFormat('zh-CN');
 const percentFormat = new Intl.NumberFormat('zh-CN', { style: 'percent', maximumFractionDigits: 1 });
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 const compactChart = window.matchMedia('(max-width: 640px)');
 
-const WINDOW_PHRASE = { day: '今天', week: '最近 7 天', month: '最近 30 天', year: '最近一年', all: '有记录以来' };
-const TREND_PHRASE = { day: ['近 30 天里', '天'], week: ['近 12 周里', '周'], month: ['近 12 个月里', '个月'] };
 const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
 const CN_DIGITS = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
 
 const nodes = {
   heroDate: document.querySelector('#heroDate'),
   heroSubtitle: document.querySelector('#heroSubtitle'),
-  heroSummary: document.querySelector('#heroSummary'),
   serviceStatus: document.querySelector('#serviceStatus'),
   serviceStatusText: document.querySelector('#serviceStatusText'),
   refreshButton: document.querySelector('#refreshButton'),
@@ -52,7 +49,6 @@ const nodes = {
   playlistTrackTitle: document.querySelector('#playlistTrackTitle'),
   trackCount: document.querySelector('#trackCount'),
   trendChart: document.querySelector('#trendChart'),
-  trendSummary: document.querySelector('#trendSummary'),
   hourlyHeatmap: document.querySelector('#hourlyHeatmap'),
   hourlyMeta: document.querySelector('#hourlyMeta'),
   mosaic: document.querySelector('#mosaic'),
@@ -120,14 +116,6 @@ function formatDayLabel(isoDate) {
   const [year, month, day] = isoDate.split('-').map(Number);
   const weekday = WEEKDAYS[new Date(year, month - 1, day).getDay()];
   return `${isoDate.slice(5).replace('-', '.')} ${weekday}`;
-}
-
-function formatBucket(bucket) {
-  if (!bucket) return '';
-  if (bucket.includes('-W')) return `第 ${Number(bucket.split('-W').at(-1))} 周`;
-  if (/^\d{4}-\d{2}-\d{2}$/.test(bucket)) return `${Number(bucket.slice(5, 7))} 月 ${Number(bucket.slice(8))} 日`;
-  if (/^\d{4}-\d{2}$/.test(bucket)) return `${bucket.slice(0, 4)} 年 ${Number(bucket.slice(5))} 月`;
-  return bucket;
 }
 
 function cachedCoverUrl(value) {
@@ -339,15 +327,14 @@ function renderHealth(health) {
 }
 
 function renderOverview(overview, health) {
-  const phrase = WINDOW_PHRASE[state.window] || '';
   if (!overview || overview.error || overview.insufficientData) {
     setMetricValue(nodes.metricPlays, '--');
     setMetricValue(nodes.metricHours, '--');
     setMetricValue(nodes.metricSongs, '--');
     setMetricValue(nodes.metricDays, formatNumber(health.have_days));
-    nodes.metricRange.textContent = '天';
+    nodes.metricRange.textContent = overview?.error ? '读取失败' : '天';
     nodes.metricPlaysHint.textContent = '次';
-    nodes.heroSummary.textContent = overview?.error ? `读取失败：${overview.error}` : getInsufficientText(overview, health.have_days);
+    nodes.metricPlays.title = overview?.error ? `读取失败：${overview.error}` : getInsufficientText(overview, health.have_days);
     return;
   }
 
@@ -361,15 +348,6 @@ function renderOverview(overview, health) {
   nodes.metricRange.textContent = formatRange(overview.range);
   nodes.metricPlaysHint.textContent = lowerBound ? '次，记录不完整' : '次';
   nodes.metricPlays.title = lowerBound ? '≥ 表示已记录的最低次数' : '';
-
-  if (!plays) {
-    nodes.heroSummary.textContent = `${phrase}还没有播放记录。`;
-    return;
-  }
-  const least = lowerBound ? '至少' : '';
-  const daysText = state.window === 'day' ? '' : `，其中 ${formatNumber(days)} 天有播放`;
-  const gapText = lowerBound ? '部分时段采集中断，数字是已记录的最低值。' : '';
-  nodes.heroSummary.textContent = `${phrase}听了${least} ${formatNumber(plays)} 次、${formatNumber(songs)} 首不同的歌，约 ${formatNumber(hours)} 小时${daysText}。${gapText}`;
 }
 
 function rankingPic(item) {
@@ -474,7 +452,10 @@ function makeTimedRow(item) {
   const time = document.createElement('time');
   time.className = 'song-row__time';
   time.textContent = formatRecentTime(item.playTime);
-  row.append(time, songTitleBlock(item.song));
+  const art = document.createElement('span');
+  art.className = 'song-row__art';
+  art.append(createCoverMedia(item.song?.album?.picUrl || item.song?.picUrl, ''));
+  row.append(time, art, songTitleBlock(item.song));
   return row;
 }
 
@@ -520,20 +501,9 @@ function splitTrendSegments(points) {
   return segments;
 }
 
-function describeTrend(series) {
-  const [lead, unit] = TREND_PHRASE[state.granularity] || TREND_PHRASE.day;
-  const known = series.filter((point) => !point.missing);
-  const peak = known.reduce((best, point) => ((point.plays || 0) > (best?.plays || 0) ? point : best), null);
-  const missing = series.length - known.length;
-  const peakText = peak?.plays ? `${lead}，${formatBucket(peak.bucket)}最多，${peak.lower_bound ? '至少 ' : ''}${formatNumber(peak.plays)} 次。` : `${lead}还没有播放记录。`;
-  const gapText = missing ? `有 ${formatNumber(missing)} ${unit}采集中断，图中留作浅色空白，不按零次计。` : '';
-  return peakText + gapText;
-}
-
 function renderTrend(payload, health) {
   lastTrend = { payload, health };
   nodes.trendChart.replaceChildren();
-  nodes.trendSummary.textContent = '';
   setDetail('trendDetail', '');
   if (!payload || payload.error) {
     nodes.trendChart.append(emptyState('趋势读取失败', payload?.error || '请稍后重试', { kind: 'error' }));
@@ -553,7 +523,6 @@ function renderTrend(payload, health) {
     return;
   }
 
-  nodes.trendSummary.textContent = describeTrend(series);
   // 手机上换一块接近实际像素的画布，坐标文字才不会被等比缩小到看不清。
   const compact = compactChart.matches;
   const width = compact ? 360 : 900;
@@ -917,7 +886,6 @@ async function loadDashboard() {
     nodes.serviceStatus.dataset.state = 'error';
     nodes.serviceStatusText.textContent = '服务不可用';
     nodes.heroSubtitle.textContent = '';
-    nodes.heroSummary.textContent = `读取失败：${error.message}`;
     nodes.rankingList.replaceChildren(emptyState('读取失败', error.message, { kind: 'error', tag: 'li' }));
     nodes.recentList.replaceChildren(emptyState('读取失败', error.message, { kind: 'error', tag: 'li' }));
     nodes.trendChart.replaceChildren(emptyState('读取失败', error.message, { kind: 'error' }));

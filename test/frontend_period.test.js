@@ -82,7 +82,7 @@ test('趋势使用直线分段面积图，在未知空桶中断并标记当前�
 
 test('趋势分段保留有记录的缺口桶与真实零值，只在未知空桶断线', () => {
   const start = source.indexOf('function splitTrendSegments');
-  const end = source.indexOf('function describeTrend', start);
+  const end = source.indexOf('function renderTrend', start);
   const split = vm.runInNewContext(`${source.slice(start, end)}; splitTrendSegments`);
   const points = [
     { bucket: 'a', plays: 10 },
@@ -141,7 +141,7 @@ test('封面统一走本站缓存与渐进加载，不再做取色光晕', () =>
   assert.match(source, /\/api\/cover\?url=/);
   assert.doesNotMatch(source, /scheduleCoverGlow|coverGlowCache/);
   assert.doesNotMatch(css, /--cover-glow|cover-shimmer/);
-  assert.match(source, /const MOSAIC_COLUMNS = 4/);
+  assert.match(source, /const MOSAIC_COLUMNS = 10/);
 });
 
 test('小时活跃度呈现 24 个可键盘聚焦且带准确文本的桶', () => {
@@ -218,4 +218,18 @@ test('图表元素点击后把说明写到区块下方，触屏也能看到明�
   }
   assert.match(source, /event\.target\.closest\('\[data-detail\]'\)/);
   assert.match(css, /\.detail-line:empty/);
+});
+
+test('品牌名统一为音乐记录，页面不再放概括句', () => {
+  assert.match(html, /<title>音乐记录<\/title>/);
+  assert.match(html, /class="brand__name">音乐记录</);
+  assert.doesNotMatch(`${html}\n${source}`, /声波时间账本|music record|heroSummary|trendSummary|describeTrend/);
+});
+
+test('最近播放显示封面，歌单索引与曲目左右排列', () => {
+  const start = source.indexOf('function makeTimedRow');
+  const end = source.indexOf('function renderRecent', start);
+  assert.match(source.slice(start, end), /createCoverMedia\(/);
+  assert.match(html, /class="playlist-layout"[\s\S]*class="playlist-index"[\s\S]*class="tracks"/);
+  assert.match(css, /\.playlist-layout \{[^}]*grid-template-columns: minmax\(0, 2fr\) minmax\(0, 3fr\)/);
 });
