@@ -201,3 +201,21 @@ test('标题日期使用中文数字', () => {
   assert.equal(chineseNumber(23), '二十三');
   assert.equal(chineseNumber(31), '三十一');
 });
+
+test('手机上趋势图换用窄画布，并在宽度变化时重画', () => {
+  const start = source.indexOf('function renderTrend');
+  const end = source.indexOf('function renderHourlyActivity', start);
+  const renderer = source.slice(start, end);
+  assert.match(source, /const compactChart = window\.matchMedia\('\(max-width: 640px\)'\)/);
+  assert.match(renderer, /compact \? 360 : 900/);
+  assert.match(source, /compactChart\.addEventListener\('change'/);
+});
+
+test('图表元素点击后把说明写到区块下方，触屏也能看到明细', () => {
+  for (const id of ['trendDetail', 'hourlyDetail', 'mosaicDetail']) {
+    assert.match(html, new RegExp(`id="${id}"`));
+    assert.match(source, new RegExp(`'${id}'`));
+  }
+  assert.match(source, /event\.target\.closest\('\[data-detail\]'\)/);
+  assert.match(css, /\.detail-line:empty/);
+});

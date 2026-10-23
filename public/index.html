@@ -84,9 +84,11 @@
         </div>
         <p class="block-lede" id="trendSummary"></p>
         <div class="trend-chart" id="trendChart" aria-live="polite"></div>
+        <p class="detail-line" id="trendDetail" aria-live="polite"></p>
         <div class="hourly">
           <div class="hourly__head"><h3>一天里什么时候听</h3><p id="hourlyMeta">近 30 天 · 不含今天</p></div>
           <div class="hourly-heatmap" id="hourlyHeatmap" aria-label="00 时至 23 时播放事件分布" aria-live="polite"></div>
+          <p class="detail-line" id="hourlyDetail" aria-live="polite"></p>
         </div>
       </section>
 
@@ -96,6 +98,7 @@
           <span class="block-note">每天播放最多的四首</span>
         </div>
         <ol class="mosaic" id="mosaic" aria-label="最近七天每日听过的歌曲封面"></ol>
+        <p class="detail-line" id="mosaicDetail" aria-live="polite"></p>
         <p class="block-meta" id="mosaicSummary" hidden></p>
       </section>
 

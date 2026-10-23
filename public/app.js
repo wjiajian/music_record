@@ -11,6 +11,7 @@ let latestHealth = { have_days: 0 };
 let overviewRequestId = 0;
 let rankingRequestId = 0;
 let trendRequestId = 0;
+let lastTrend = null;
 
 const PLAYLIST_PAGE_SIZE = 10;
 const TRACK_PAGE_SIZE = 10;
@@ -20,6 +21,7 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 const numberFormat = new Intl.NumberFormat('zh-CN');
 const percentFormat = new Intl.NumberFormat('zh-CN', { style: 'percent', maximumFractionDigits: 1 });
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
+const compactChart = window.matchMedia('(max-width: 640px)');
 
 const WINDOW_PHRASE = { day: '今天', week: '最近 7 天', month: '最近 30 天', year: '最近一年', all: '有记录以来' };
 const TREND_PHRASE = { day: ['近 30 天里', '天'], week: ['近 12 周里', '周'], month: ['近 12 个月里', '个月'] };
@@ -189,6 +191,16 @@ function emptyState(title, text, { kind = 'empty', tag = 'div' } = {}) {
   return wrap;
 }
 
+// 悬停提示在触屏上不可见，点击后把同一段说明写到区块下方。
+function setDetail(targetId, text, selected = null) {
+  const target = document.getElementById(targetId);
+  if (!target) return;
+  target.textContent = text;
+  document.querySelectorAll(`[data-detail-target="${targetId}"]`).forEach((element) => {
+    element.classList.toggle('is-selected', element === selected);
+  });
+}
+
 function createCoverMedia(source, alt) {
   const media = document.createElement('span');
   media.className = 'cover-media';
@@ -294,6 +306,8 @@ function renderMosaic(payload = null) {
       const label = `${item.date}，${entry.song?.name || '未命名歌曲'}，${songSubtitle(entry.song)}，${formatNumber(entry.plays)} 次播放`;
       button.setAttribute('aria-label', label);
       button.title = label;
+      button.dataset.detail = label;
+      button.dataset.detailTarget = 'mosaicDetail';
       button.append(createCoverMedia(entry.song?.album?.picUrl || entry.song?.picUrl, ''));
       return button;
     }));
@@ -301,6 +315,7 @@ function renderMosaic(payload = null) {
     return row;
   });
   nodes.mosaic.replaceChildren(...rows);
+  setDetail('mosaicDetail', '');
 
   if (payload?.error) {
     nodes.mosaicSummary.textContent = `封面读取失败：${payload.error}`;
@@ -516,8 +531,10 @@ function describeTrend(series) {
 }
 
 function renderTrend(payload, health) {
+  lastTrend = { payload, health };
   nodes.trendChart.replaceChildren();
   nodes.trendSummary.textContent = '';
+  setDetail('trendDetail', '');
   if (!payload || payload.error) {
     nodes.trendChart.append(emptyState('趋势读取失败', payload?.error || '请稍后重试', { kind: 'error' }));
     return;
@@ -537,12 +554,14 @@ function renderTrend(payload, health) {
   }
 
   nodes.trendSummary.textContent = describeTrend(series);
-  const width = 900;
-  const height = 250;
-  const left = 40;
-  const right = 12;
+  // 手机上换一块接近实际像素的画布，坐标文字才不会被等比缩小到看不清。
+  const compact = compactChart.matches;
+  const width = compact ? 360 : 900;
+  const height = compact ? 200 : 250;
+  const left = compact ? 32 : 40;
+  const right = compact ? 8 : 12;
   const top = 10;
-  const baseline = 212;
+  const baseline = height - 38;
   const plotWidth = width - left - right;
   const max = Math.max(...series.map((point) => point.plays || 0), 1);
   const step = series.length > 1 ? plotWidth / (series.length - 1) : plotWidth;
@@ -593,7 +612,7 @@ function renderTrend(payload, health) {
     }
   }
 
-  const labelStride = Math.max(1, Math.ceil(series.length / 7));
+  const labelStride = Math.max(1, Math.ceil(series.length / (compact ? 4 : 7)));
   points.forEach((point, index) => {
     if (point.is_current) {
       svg.append(makeSvgElement('line', { x1: point.x, y1: top, x2: point.x, y2: baseline, class: 'trend-current-line' }));
@@ -602,14 +621,16 @@ function renderTrend(payload, health) {
       const circle = makeSvgElement('circle', {
         cx: point.x,
         cy: point.y,
-        r: point.is_current ? 4 : 2.5,
+        r: point.is_current ? 4 : compact ? 3.5 : 2.5,
         class: `trend-point${point.is_current ? ' is-current' : ''}`,
         tabindex: 0,
         role: 'img',
+        'data-detail-target': 'trendDetail',
         'aria-label': `${point.bucket}：${point.lower_bound ? '至少 ' : ''}${formatNumber(point.plays)} 次${point.has_gap ? '，记录不完整' : ''}${point.estimated ? '，日级归属不确定' : ''}${point.is_current ? '，进行中' : ''}`,
       });
+      circle.dataset.detail = circle.getAttribute('aria-label');
       const tooltip = makeSvgElement('title');
-      tooltip.textContent = circle.getAttribute('aria-label');
+      tooltip.textContent = circle.dataset.detail;
       circle.append(tooltip);
       svg.append(circle);
     }
@@ -679,6 +700,8 @@ function renderHourlyActivity(payload) {
     const label = `${String(bucket.hour).padStart(2, '0')} 时：${lowerBound ? '至少 ' : ''}${formatNumber(bucket.plays)} 次，${formatNumber(bucket.distinct_songs)} 首不同歌曲，占可按小时统计的播放 ${percentFormat.format(bucket.share || 0)}`;
     cell.setAttribute('aria-label', label);
     cell.title = label;
+    cell.dataset.detail = label;
+    cell.dataset.detailTarget = 'hourlyDetail';
     const track = document.createElement('span');
     track.className = 'hour-cell__track';
     track.setAttribute('aria-hidden', 'true');
@@ -691,6 +714,7 @@ function renderHourlyActivity(payload) {
     return cell;
   });
   nodes.hourlyHeatmap.replaceChildren(...cells);
+  setDetail('hourlyDetail', '');
   const meta = payload.meta || {};
   const qualityLabel = meta.data_quality?.historical && !meta.located_plays ? '数据不足 · ' : lowerBound ? '最低估计 · ' : '';
   const unlocated = meta.unlocated_plays
@@ -950,7 +974,15 @@ document.addEventListener('click', (event) => {
       button.setAttribute('aria-pressed', String(selected));
     });
     loadPlaylistTracks();
+    return;
   }
+
+  const detail = event.target.closest('[data-detail]');
+  if (detail) setDetail(detail.dataset.detailTarget, detail.dataset.detail, detail);
+});
+
+compactChart.addEventListener('change', () => {
+  if (lastTrend) renderTrend(lastTrend.payload, lastTrend.health);
 });
 
 nodes.refreshButton.addEventListener('click', loadDashboard);

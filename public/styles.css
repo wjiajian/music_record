@@ -654,6 +654,15 @@ svg {
   stroke: var(--accent);
 }
 
+.trend-point {
+  cursor: pointer;
+}
+
+.trend-point.is-selected {
+  stroke: var(--accent);
+  stroke-width: 3;
+}
+
 .trend-point:focus-visible {
   outline: none;
   stroke: var(--accent);
@@ -799,6 +808,32 @@ svg {
 
 .hour-cell:hover .hour-cell__bar {
   background: var(--n-8);
+}
+
+.hour-cell.is-selected strong {
+  color: var(--n-10);
+}
+
+.hour-cell.is-selected .hour-cell__bar {
+  outline: 1px solid var(--n-8);
+  outline-offset: 1px;
+}
+
+.mosaic-cover.is-selected {
+  box-shadow: 0 0 0 2px var(--n-1), 0 0 0 3px var(--n-8);
+}
+
+/* 点击图表元素后显示的说明，空时不占位。 */
+.detail-line {
+  margin: 8px 0 0;
+  color: var(--n-8);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.detail-line:empty {
+  display: none;
 }
 
 .hour-cell strong {
