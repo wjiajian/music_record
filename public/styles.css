@@ -386,7 +386,8 @@ svg {
   align-items: baseline;
   justify-content: space-between;
   gap: 8px 16px;
-  min-height: 44px;
+  /* 32px 标签按钮 + 12px 内边距 + 1px 边框；有无标签的区块头等高，左右两栏列表才能逐行对齐。 */
+  min-height: 45px;
   padding-bottom: 12px;
   border-bottom: 1px solid var(--border);
 }
