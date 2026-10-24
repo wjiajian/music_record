@@ -473,6 +473,35 @@ svg {
   border-bottom: 1px solid var(--hairline);
 }
 
+.rank-row,
+.song-row {
+  position: relative;
+}
+
+.rank-link {
+  text-decoration: none;
+}
+
+.rank-link::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+}
+
+.rank-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.rank-link:focus-visible {
+  outline: none;
+}
+
+.rank-link:focus-visible::after {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .rank-row {
   grid-template-columns: 24px 36px minmax(0, 1fr) auto;
 }

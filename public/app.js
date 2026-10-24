@@ -208,6 +208,20 @@ function createCoverMedia(source, alt) {
   return media;
 }
 
+// 标题即链接：.rank-link 的 ::after 铺满整行，整行可点但只有一个可聚焦元素。
+function createTitle(text, type, id) {
+  const title = document.createElement(id ? 'a' : 'span');
+  title.className = 'rank-title';
+  title.textContent = text || '未命名';
+  if (id) {
+    title.classList.add('rank-link');
+    title.href = `https://music.163.com/#/${type}?id=${encodeURIComponent(id)}`;
+    title.target = '_blank';
+    title.rel = 'noopener noreferrer';
+  }
+  return title;
+}
+
 function getInsufficientText(payload, haveDays) {
   if (payload?.error) return `读取失败：${payload.error}`;
   const have = payload?.haveDays ?? haveDays ?? 0;
@@ -390,9 +404,7 @@ function renderRanking(payload, health) {
 
     const main = document.createElement('span');
     main.className = 'rank-main';
-    const title = document.createElement('span');
-    title.className = 'rank-title';
-    title.textContent = item.name || '未命名';
+    const title = createTitle(item.name, state.dimension, item.id);
     const subtitle = document.createElement('span');
     subtitle.className = 'rank-subtitle';
     subtitle.textContent = subtitleFor(item);
@@ -423,9 +435,7 @@ function songSubtitle(song) {
 function songTitleBlock(song) {
   const main = document.createElement('span');
   main.className = 'song-row__main';
-  const title = document.createElement('span');
-  title.className = 'rank-title';
-  title.textContent = song?.name || '未命名';
+  const title = createTitle(song?.name, 'song', song?.id);
   const subtitle = document.createElement('span');
   subtitle.className = 'rank-subtitle';
   subtitle.textContent = songSubtitle(song);
