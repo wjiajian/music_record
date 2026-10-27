@@ -1,5 +1,5 @@
 # music-record —— 网易云听歌统计 API + 进程内每日采集
-# 纯 JS（ESM），无编译步骤；node:sqlite 内置模块要求 Node >= 22.5。
+# 纯 JS（ESM），无编译步骤；node:sqlite 内置模块需 Node >= 22.13 才免 --experimental-sqlite 默认可用。
 # 多阶段：deps 层装依赖可被缓存；runtime 层只带生产依赖 + 源码，镜像更小。
 
 # ---- deps：只装生产依赖（利用 layer 缓存，源码变动不重装）----

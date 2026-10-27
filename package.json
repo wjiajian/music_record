@@ -5,7 +5,7 @@
   "type": "module",
   "description": "网易云个人听歌统计 —— 每日快照 + 差分，按天/周/月/年统计听歌排行",
   "engines": {
-    "node": ">=22.5.0"
+    "node": ">=22.13.0"
   },
   "scripts": {
     "migrate": "node --disable-warning=ExperimentalWarning src/db/migrate.js",

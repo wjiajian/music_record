@@ -1,8 +1,8 @@
-# music-record
-
 <p align="center">
-  <img src="resources/logo.png" alt="music-record logo" width="120">
+  <img src="public/favicon.svg" alt="音乐记录标志：留有缺口的圆环与玫瑰色圆点" width="96">
 </p>
+
+<h1 align="center">音乐记录</h1>
 
 > 网易云音乐个人听歌统计：通过最近播放事件和每日累计快照生成本地记录，提供歌曲、歌手、专辑排行与播放趋势。
 
@@ -20,7 +20,7 @@
 - **快照差分**：计算同一首歌相邻可见快照的累计差值；首次出现的歌曲不计算差分，跨多日增量标记日期归属不确定。
 - **双数据源合并**：最近播放事件计数与 allData 差分按每首歌、每天取较大值。
 - **滚动窗口统计**：歌曲 / 歌手 / 专辑三个维度；日 / 周 / 月 / 年对应滚动 1 / 7 / 30 / 365 天，另支持全部已记录历史。
-- **可视化统计**：概览、排行、播放趋势、七日歌曲封面、24 小时活跃度、日历热力与周几分布。
+- **Web 前端**：单页展示概览、排行、最近播放、播放趋势、24 小时活跃度、七日歌曲封面和歌单；原生 ESM，无框架、无构建步骤。日历热力与周几分布目前只通过 API 提供。
 - **进程内定时采集**：最近播放默认每 60 秒轮询，每日快照默认 04:00 采集，无需 cron。
 - **数据质量标注**：概览、排行等统计提供下界状态，前端以 `≥ X` 标注；趋势区分数据未知与已确认的零播放。
 - **歌单与封面**：同步用户歌单及曲目到本地数据库，网易云封面支持磁盘缓存。
@@ -56,8 +56,8 @@ allData 存在传播延迟，因此默认在 04:00 采集，并以 `ATTRIBUTION=
 ### 1. 安装
 
 ```bash
-git clone <repo-url> music-record
-cd music-record
+git clone https://github.com/wjiajian/music_record.git
+cd music_record
 npm install
 ```
 
@@ -257,6 +257,7 @@ docker compose exec music-record npm run collect
 ```bash
 npm run probe           # 采样一次
 npm run probe:watch     # 持续采样，已登记的实验窗口内自动提高采样频率
+npm run probe:burst     # 每次采样连抓 3 次（间隔 1.5 秒），缩小延迟的估计区间
 npm run probe:analyze   # 分析已采集的延迟数据
 ```
 
@@ -274,7 +275,9 @@ src/
 ├── db/           schema / migrate / rebuild / 连接管理
 ├── probe/        allData 更新延迟标定探针
 └── config.js     集中配置（环境变量覆盖）
-public/           轻量前端（原生 ESM，无框架）
+public/           前端页面、样式、脚本与站点图标（favicon.svg 为标志源文件）
 scripts/          Windows .cmd 启动 / 采集 / 探针包装
 test/             node:test 单元测试
 ```
+
+数据口径与界面用语（统计窗口、趋势粒度、归属日等）的定义见 [`CONTEXT.md`](CONTEXT.md)。

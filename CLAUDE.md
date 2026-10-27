@@ -10,7 +10,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 运行环境（硬约束）
 
-- **Node.js >= 22.5.0**，因为直接用了内置 `node:sqlite`、`node:test`、`process.loadEnvFile`、`fetch` —— 这些都是免依赖的关键。运行时依赖只有 `fastify` + `luxon` 两个，**不要为已能用内置能力解决的问题引入新依赖**。
+- **Node.js >= 22.13.0**（`node:sqlite` 自该版本起无需 `--experimental-sqlite`，npm 脚本不带此参数），因为直接用了内置 `node:sqlite`、`node:test`、`process.loadEnvFile`、`fetch` —— 这些都是免依赖的关键。运行时依赖只有 `fastify` + `luxon` 两个，**不要为已能用内置能力解决的问题引入新依赖**。
 - ESM（`"type":"module"`），全项目无编译步骤。
 - 所有 npm 脚本都带 `--disable-warning=ExperimentalWarning`（压掉 `node:sqlite` 的实验特性警告）。
 
