@@ -16,6 +16,7 @@ test('固定 URL 的 HTML、JS 和 CSS 每次使用前需重新验证', async ()
     ['app.js', 'text/javascript', 'no-cache'],
     ['styles.css', 'text/css', 'no-cache'],
     ['logo.png', 'image/png', 'public, max-age=3600, must-revalidate'],
+    ['favicon.svg', 'image/svg+xml', 'public, max-age=3600, must-revalidate'],
   ]) {
     const headers = new Map();
     const reply = {

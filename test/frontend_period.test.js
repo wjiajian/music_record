@@ -162,7 +162,9 @@ test('小时活跃度呈现 24 个可键盘聚焦且带准确文本的桶', () =
 test('图标使用本地 Lucide SVG sprite，不再用字符充当控件图标', () => {
   assert.match(html, /data-lucide-version="0\.468\.0"/);
   assert.match(html, /id="icon-rotate-cw"/);
+  assert.match(html, /rel="icon"[^>]+href="\/favicon\.svg"/);
   assert.match(html, /rel="icon"[^>]+href="\/favicon\.png"/);
+  assert.match(html, /<use href="#logo-mark">/);
   assert.match(html, /rel="apple-touch-icon" href="\/logo\.png"/);
   assert.doesNotMatch(`${html}\n${source}`, /↻|‹|›/);
   // 生产环境不依赖 Google Fonts（国内不可达）。

@@ -27,6 +27,7 @@ app.get('/', async (_req, reply) => sendPublic(reply, 'index.html', 'text/html; 
 app.get('/styles.css', async (_req, reply) => sendPublic(reply, 'styles.css', 'text/css; charset=utf-8'));
 app.get('/app.js', async (_req, reply) => sendPublic(reply, 'app.js', 'text/javascript; charset=utf-8'));
 app.get('/logo.png', async (_req, reply) => sendPublic(reply, 'logo.png', 'image/png'));
+app.get('/favicon.svg', async (_req, reply) => sendPublic(reply, 'favicon.svg', 'image/svg+xml'));
 app.get('/favicon.png', async (_req, reply) => sendPublic(reply, 'favicon.png', 'image/png'));
 // 浏览器有时自动请求 /favicon.ico，指向同一张 png 兜底，避免 404 噪音
 app.get('/favicon.ico', async (_req, reply) => sendPublic(reply, 'favicon.png', 'image/png'));

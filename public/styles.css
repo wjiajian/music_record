@@ -168,10 +168,15 @@ svg {
 
 .brand {
   display: inline-flex;
-  align-items: baseline;
+  align-items: center;
   gap: 8px;
   color: var(--n-10);
   text-decoration: none;
+}
+
+.brand__mark {
+  width: 24px;
+  height: 24px;
 }
 
 .brand__name {

@@ -6,6 +6,7 @@
     <meta name="theme-color" content="#f9f8f5">
     <meta name="description" content="音乐记录：按本地时间观察播放、排行、趋势与歌单。">
     <title>音乐记录</title>
+    <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="icon" type="image/png" href="/favicon.png">
     <link rel="apple-touch-icon" href="/logo.png">
     <link rel="stylesheet" href="/styles.css">
@@ -21,12 +22,16 @@
       <symbol id="icon-mic2" viewBox="0 0 24 24"><rect x="9" y="2" width="6" height="11" rx="3"></rect><path d="M5 10a7 7 0 0 0 14 0M12 17v5M8 22h8"></path></symbol>
       <symbol id="icon-chevron-left" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6"></path></symbol>
       <symbol id="icon-chevron-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"></path></symbol>
+      <!-- 站点标志（圆相）：与 favicon.svg 同形，圆环跟随文字色。 -->
+      <symbol id="logo-mark" viewBox="0 0 64 64">
+        <path d="M52.62 28.03A21 21 0 1 1 35.97 11.38" stroke-width="7"></path><circle cx="46.85" cy="17.15" r="5.5" fill="#c56473" stroke="none"></circle>
+      </symbol>
     </svg>
 
     <header class="topbar">
       <div class="topbar__inner">
         <a class="brand" href="#overview" aria-label="音乐记录首页">
-          <span class="brand__name">音乐记录</span>
+          <svg class="brand__mark" aria-hidden="true"><use href="#logo-mark"></use></svg><span class="brand__name">音乐记录</span>
         </a>
         <nav class="nav-links" aria-label="页面导航"><a href="#overview">今天</a><a href="#trend">趋势</a><a href="#covers">封面</a><a href="#playlists">歌单</a></nav>
       </div>
