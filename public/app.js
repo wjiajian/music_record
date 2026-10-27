@@ -161,7 +161,7 @@ function setMetricValue(node, text) {
   node.replaceChildren(prefixNode, digitNode);
   node.dataset.raw = raw;
   if (previous && previous !== raw && !reducedMotion.matches && digitNode.animate) {
-    digitNode.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 200, easing: 'ease' });
+    digitNode.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 300, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' });
   }
 }
 
@@ -177,6 +177,71 @@ function emptyState(title, text, { kind = 'empty', tag = 'div' } = {}) {
     wrap.append(paragraph);
   }
   return wrap;
+}
+
+// 骨架块：--w / --h 让每行宽度、每根柱高略有不同，看起来像真实内容。
+function skeleton(className, vars = {}) {
+  const block = document.createElement('span');
+  block.className = `skeleton ${className}`;
+  for (const [key, value] of Object.entries(vars)) block.style.setProperty(`--${key}`, value);
+  return block;
+}
+
+function skeletonLines(width) {
+  const lines = document.createElement('span');
+  lines.className = 'skeleton-lines';
+  lines.append(skeleton('skeleton--line', { w: width }), skeleton('skeleton--line is-sub', { w: width }));
+  return lines;
+}
+
+function skeletonRow(className, cells) {
+  const row = document.createElement('li');
+  row.className = `${className} is-skeleton`;
+  row.setAttribute('aria-hidden', 'true');
+  row.append(...cells);
+  return row;
+}
+
+const SKELETON_WIDTHS = ['72%', '48%', '64%', '56%', '80%', '44%', '68%', '52%', '76%', '60%'];
+
+// 首屏数据回来前，各区块先占好与真实布局同形的位置。
+function renderSkeletons() {
+  nodes.rankingList.replaceChildren(...SKELETON_WIDTHS.map((width) => skeletonRow('rank-row', [
+    skeleton('skeleton--short'), skeleton('skeleton--cover'), skeletonLines(width), skeleton('skeleton--short'),
+  ])));
+  nodes.recentList.replaceChildren(...SKELETON_WIDTHS.map((width) => skeletonRow('song-row song-row--timed', [
+    skeleton('skeleton--time'), skeleton('skeleton--cover'), skeletonLines(width),
+  ])));
+  nodes.trendChart.replaceChildren(skeleton('skeleton--chart'));
+  nodes.hourlyHeatmap.replaceChildren(...Array.from({ length: 24 }, (_, hour) => {
+    const cell = document.createElement('span');
+    cell.className = 'hour-cell is-skeleton';
+    cell.setAttribute('aria-hidden', 'true');
+    const track = document.createElement('span');
+    track.className = 'hour-cell__track';
+    track.append(skeleton('skeleton--bar', { h: `${Math.round(30 + 25 * Math.sin(hour / 3.5))}%` }));
+    cell.append(track, document.createElement('strong'));
+    return cell;
+  }));
+  nodes.mosaic.replaceChildren(...SKELETON_WIDTHS.slice(0, 3).map(() => {
+    const meta = document.createElement('span');
+    meta.className = 'mosaic-row__meta';
+    meta.append(skeletonLines('80%'));
+    const covers = document.createElement('span');
+    covers.className = 'mosaic-covers';
+    covers.append(...Array.from({ length: MOSAIC_COLUMNS }, () => skeleton('mosaic-slot')));
+    return skeletonRow('mosaic-row', [meta, covers]);
+  }));
+  nodes.playlistList.replaceChildren(...SKELETON_WIDTHS.slice(0, 6).map((width) => {
+    const row = document.createElement('div');
+    row.className = 'playlist-row is-skeleton';
+    row.setAttribute('aria-hidden', 'true');
+    row.append(skeleton('skeleton--line', { w: width }), skeleton('skeleton--short'));
+    return row;
+  }));
+  nodes.playlistTracks.replaceChildren(...SKELETON_WIDTHS.slice(0, 6).map((width) => skeletonRow('song-row', [
+    skeleton('skeleton--cover'), skeletonLines(width), skeleton('skeleton--short'),
+  ])));
 }
 
 // 悬停提示在触屏上不可见，点击后把同一段说明写到区块下方。
@@ -896,6 +961,9 @@ async function loadDashboard() {
     nodes.serviceStatus.dataset.state = 'error';
     nodes.serviceStatusText.textContent = '服务不可用';
     nodes.heroSubtitle.textContent = '';
+    // 首屏骨架必须全部换掉，否则服务不可用时会一直停在加载态。
+    for (const node of [nodes.metricPlays, nodes.metricHours, nodes.metricSongs, nodes.metricDays]) setMetricValue(node, '--');
+    renderPlaylists({ error: error.message });
     nodes.rankingList.replaceChildren(emptyState('读取失败', error.message, { kind: 'error', tag: 'li' }));
     nodes.recentList.replaceChildren(emptyState('读取失败', error.message, { kind: 'error', tag: 'li' }));
     nodes.trendChart.replaceChildren(emptyState('读取失败', error.message, { kind: 'error' }));
@@ -965,8 +1033,44 @@ compactChart.addEventListener('change', () => {
 
 nodes.refreshButton.addEventListener('click', loadDashboard);
 
+// 顶栏高亮当前所在区块；排行与最近播放归入「今天」。键的顺序即页面顺序。
+const NAV_SECTIONS = { overview: 'overview', ranking: 'overview', live: 'overview', trend: 'trend', covers: 'covers', playlists: 'playlists' };
+const navLinks = [...document.querySelectorAll('.nav-links a')];
+const sectionsInView = new Set();
+
+function setCurrentNav(id) {
+  for (const link of navLinks) {
+    if (link.hash === `#${id}`) link.setAttribute('aria-current', 'location');
+    else link.removeAttribute('aria-current');
+  }
+}
+
+// 判定带取顶栏下方到视口 40% 处；区块间隙里没有命中时保持上一次高亮。
+const navObserver = new IntersectionObserver((entries) => {
+  for (const entry of entries) {
+    if (entry.isIntersecting) sectionsInView.add(entry.target.id);
+    else sectionsInView.delete(entry.target.id);
+  }
+  const current = Object.keys(NAV_SECTIONS).filter((id) => sectionsInView.has(id)).at(-1);
+  if (current) setCurrentNav(NAV_SECTIONS[current]);
+}, { rootMargin: '-80px 0px -60% 0px' });
+Object.keys(NAV_SECTIONS).forEach((id) => navObserver.observe(document.getElementById(id)));
+setCurrentNav('overview');
+
+const revealObserver = new IntersectionObserver((entries, observer) => {
+  for (const entry of entries) {
+    if (!entry.isIntersecting) continue;
+    entry.target.classList.add('is-revealed');
+    observer.unobserve(entry.target);
+  }
+}, { rootMargin: '0px 0px -10% 0px' });
+document.querySelectorAll('.page-shell > .block, .split > .block').forEach((block) => {
+  block.classList.add('reveal');
+  revealObserver.observe(block);
+});
+
 const now = new Date();
 nodes.heroDate.dateTime = now.toLocaleDateString('en-CA');
 nodes.heroDate.textContent = `${chineseNumber(now.getMonth() + 1)}月${chineseNumber(now.getDate())}日`;
-renderMosaic();
+renderSkeletons();
 loadDashboard();
