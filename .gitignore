@@ -1,17 +1,27 @@
+# 依赖
 node_modules/
+
+# 数据与数据库文件
 data/
 *.db
 *.db-wal
 *.db-shm
+
+# 日志
 *.log
+
+# 本地环境配置
 .env
-.claude
-.agent
 
-
+# 本地项目与部署文件
 exa-electric-editorial
-
 deploy
-
 server_host.md
 memory.md
+
+# 编程助手配置
+.agent
+.claude
+.codex
+.copilot
+.pi
