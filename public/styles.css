@@ -28,8 +28,9 @@
   --serif: "Noto Serif SC", "Noto Serif CJK SC", "Source Han Serif SC", "Songti SC", STSong, serif;
   --mono: "JetBrains Mono", "SFMono-Regular", "Cascadia Code", Consolas, Monaco, monospace;
   --page: 960px;
-  /* 动效：颜色/透明度 300ms，位移 500ms，统一缓出曲线。 */
+  /* 动效：颜色/透明度 300ms，位移 500ms，统一缓出曲线；描线这类匀速铺开的用缓入缓出。 */
   --ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
   --duration-fade: 300ms;
   --duration-move: 500ms;
   --duration-reveal: 700ms;
@@ -865,6 +866,20 @@ button.rank-link {
   stroke-width: 3;
 }
 
+/* 描线：折线与圆点从左往右擦出，面积等折线快画到头再淡入。用 backwards，播完撤掉裁剪，不切到描边。 */
+.trend-figure.is-drawing .trend-plot {
+  animation: trend-draw var(--duration-reveal) var(--ease-in-out) backwards;
+}
+
+.trend-figure.is-drawing .trend-areas {
+  animation: motion-fade-in var(--duration-move) var(--ease) 450ms backwards;
+}
+
+@keyframes trend-draw {
+  from { clip-path: inset(-8px calc(100% + 8px) -8px -8px); }
+  to { clip-path: inset(-8px); }
+}
+
 .trend-caption {
   display: flex;
   flex-wrap: wrap;
@@ -993,7 +1008,9 @@ button.rank-link {
   height: max(1px, calc(var(--intensity, 0) * 100%));
   border-radius: 2px;
   background: var(--n-5);
+  transform-origin: bottom;
   transition: background-color var(--duration-fade) var(--ease);
+  animation: bar-grow var(--duration-reveal) var(--ease) calc(var(--i, 0) * 16ms) backwards;
 }
 
 .hour-cell[data-level="0"] .hour-cell__bar {
@@ -1227,6 +1244,11 @@ button.cal-cell:hover {
 
 .cal-detail[hidden] {
   display: none;
+}
+
+/* 高度过渡期间裁掉溢出，播完恢复，免得裁到焦点框。 */
+.cal-detail.is-resizing {
+  overflow: hidden;
 }
 
 .cal-detail__head {
@@ -1473,6 +1495,8 @@ html:has(.drawer[open]) {
   margin: 0;
   padding: 0;
   overflow-y: auto;
+  /* 内容左右推入时会短暂伸出抽屉，横向不给滚动。 */
+  overflow-x: hidden;
   overscroll-behavior: contain;
   border: 0;
   border-left: 1px solid var(--border);
@@ -1728,7 +1752,11 @@ html:has(.drawer[open]) {
 
 .dc-bar,
 .dh-bar {
+  transform-box: fill-box;
+  transform-origin: bottom;
   transition: fill var(--duration-move) var(--ease);
+  /* 按 --at 从左到右错开，整排最多晚 300ms。 */
+  animation: bar-grow var(--duration-move) var(--ease) calc(var(--at, 0) * 300ms) backwards;
 }
 
 .dc-bar {
@@ -1860,12 +1888,24 @@ html:has(.drawer[open]) {
   transform: none;
 }
 
-/* 切换动画（View Transitions）：排行行按名次滑动、趋势图与日历淡入淡出；
-   data-vt="swap" 时页面其余部分瞬间更新，data-vt="theme" 时整页斜向擦过（见下方 theme-reveal）。 */
-.trend-chart {
-  view-transition-name: trend-chart;
+/* 区块还没滚进视口时，里面的描线、长柱先停在起点，进场时再播，免得在看不见的地方播完。 */
+@media (prefers-reduced-motion: no-preference) {
+  .reveal:not(.is-revealed) :is(.trend-plot, .trend-areas, .hour-cell__bar) {
+    animation-play-state: paused;
+  }
 }
 
+@keyframes motion-fade-in {
+  from { opacity: 0; }
+}
+
+/* 柱子从底边长出来；SVG 里的柱子要配 transform-box: fill-box，原点才落在柱子自己的底边。 */
+@keyframes bar-grow {
+  from { transform: scaleY(0); }
+}
+
+/* 切换动画（View Transitions）：排行行按名次滑动、日历淡入淡出（趋势图改为描线，见 trend-draw）；
+   data-vt="swap" 时页面其余部分瞬间更新，data-vt="theme" 时整页斜向擦过（见下方 theme-reveal）。 */
 .cal-scroll {
   view-transition-name: cal-heatmap;
 }
@@ -1886,7 +1926,6 @@ html:has(.drawer[open]) {
 /* 换主题：新主题从右下角斜着拉开一小段，顿一下，再一路铺到左上角；旧主题留在底下不动。
    整页作为一张快照擦过去，平时单独命名的区块这时并回根快照，不各自淡入淡出。 */
 :root[data-vt="theme"] .rank-row,
-:root[data-vt="theme"] .trend-chart,
 :root[data-vt="theme"] .cal-scroll {
   view-transition-name: none !important;
 }
@@ -2132,6 +2171,8 @@ html:has(.drawer[open]) {
   *::after {
     transition-duration: 0ms !important;
     animation-duration: 0ms !important;
+    /* 错开出场的延迟也归零，否则柱子会先空着等一会儿再一下子出现。 */
+    animation-delay: 0ms !important;
   }
 
   /* 减少动效时入场只保留淡入，不位移。 */
