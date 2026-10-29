@@ -19,6 +19,11 @@
   /* 边框与阴影取 --n-9 的暖灰，与底色同一色相。 */
   --border: rgba(36, 35, 31, 0.1);
   --hairline: rgba(36, 35, 31, 0.06);
+  --scrim: rgba(36, 35, 31, 0.24);
+  /* 详情抽屉按封面色相染色时用的亮度：强调色要压得住字，底色只是一层薄薄的色调。 */
+  --tone-accent-l: 42%;
+  --tone-wash-s: 35%;
+  --tone-wash-l: 96.5%;
   --sans: Inter, -apple-system, BlinkMacSystemFont, "PingFang SC", "Microsoft YaHei", "Noto Sans SC", "Hiragino Sans GB", sans-serif;
   --serif: "Noto Serif SC", "Noto Serif CJK SC", "Source Han Serif SC", "Songti SC", STSong, serif;
   --mono: "JetBrains Mono", "SFMono-Regular", "Cascadia Code", Consolas, Monaco, monospace;
@@ -28,6 +33,57 @@
   --duration-fade: 300ms;
   --duration-move: 500ms;
   --duration-reveal: 700ms;
+}
+
+/* 深色：同一套暖灰倒过来排，强调色略提亮以保证对比。默认跟随系统，顶栏按钮可手动指定（data-theme）。 */
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --n-1: #151412;
+    --n-2: #1d1c19;
+    --n-3: #282723;
+    --n-4: #3a3833;
+    --n-5: #5c5a54;
+    --n-6: #8a8780;
+    --n-7: #a6a39b;
+    --n-8: #c9c6be;
+    --n-9: #e4e1da;
+    --n-10: #f5f3ee;
+    --accent: #d9798a;
+    --success: #74b893;
+    --warning: #c99c5e;
+    --error: #d4737c;
+    --border: rgba(245, 243, 238, 0.12);
+    --hairline: rgba(245, 243, 238, 0.07);
+    --scrim: rgba(0, 0, 0, 0.5);
+    --tone-accent-l: 72%;
+    --tone-wash-s: 18%;
+    --tone-wash-l: 11.5%;
+  }
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --n-1: #151412;
+  --n-2: #1d1c19;
+  --n-3: #282723;
+  --n-4: #3a3833;
+  --n-5: #5c5a54;
+  --n-6: #8a8780;
+  --n-7: #a6a39b;
+  --n-8: #c9c6be;
+  --n-9: #e4e1da;
+  --n-10: #f5f3ee;
+  --accent: #d9798a;
+  --success: #74b893;
+  --warning: #c99c5e;
+  --error: #d4737c;
+  --border: rgba(245, 243, 238, 0.12);
+  --hairline: rgba(245, 243, 238, 0.07);
+  --scrim: rgba(0, 0, 0, 0.5);
+  --tone-accent-l: 72%;
+  --tone-wash-s: 18%;
+  --tone-wash-l: 11.5%;
 }
 
 * {
@@ -150,7 +206,7 @@ svg {
   top: 0;
   z-index: 20;
   border-bottom: 1px solid var(--border);
-  background: rgba(249, 248, 245, 0.8);
+  background: color-mix(in srgb, var(--n-1) 80%, transparent);
   backdrop-filter: blur(4px);
 }
 
@@ -186,9 +242,33 @@ svg {
   line-height: 28px;
 }
 
+/* 桌面：品牌 | 导航 主题按钮；手机：第一行品牌与主题按钮，导航换到第二行。 */
 .nav-links {
   display: flex;
   flex-wrap: wrap;
+  margin-left: auto;
+}
+
+.theme-toggle {
+  display: grid;
+  order: 1;
+  width: 44px;
+  height: 44px;
+  place-items: center;
+  margin-right: -12px;
+  border-radius: 6px;
+  color: var(--n-7);
+  transition: color var(--duration-fade) var(--ease), background-color var(--duration-fade) var(--ease);
+}
+
+.theme-toggle:hover {
+  color: var(--n-10);
+  background: var(--n-2);
+}
+
+.theme-toggle svg {
+  width: 18px;
+  height: 18px;
 }
 
 .nav-links a {
@@ -312,6 +392,58 @@ svg {
 .seg-button.is-active {
   color: var(--n-1);
   background: var(--n-10);
+}
+
+/* 选中块由 .switch-indicator 承担并滑动；按钮自身只换文字色。 */
+.segmented,
+.tabs {
+  position: relative;
+}
+
+.has-indicator > .seg-button,
+.has-indicator > .tab {
+  position: relative;
+  z-index: 1;
+}
+
+.segmented.has-indicator > .seg-button.is-active {
+  background: transparent;
+}
+
+.tabs.has-indicator > .tab.is-active {
+  box-shadow: none;
+}
+
+.switch-indicator {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: var(--w, 0);
+  pointer-events: none;
+}
+
+.switch-indicator.is-ready {
+  transition:
+    transform var(--duration-move) var(--ease),
+    width var(--duration-move) var(--ease),
+    height var(--duration-move) var(--ease);
+}
+
+.segmented > .switch-indicator {
+  height: var(--h, 0);
+  border-radius: 6px;
+  background: var(--n-10);
+  transform: translate(var(--x, 0), var(--y, 0));
+}
+
+.tabs > .switch-indicator {
+  height: 1px;
+  background: var(--n-10);
+  transform: translate(var(--x, 0), calc(var(--y, 0px) + var(--h, 0px) - 1px));
+}
+
+.switch-indicator[hidden] {
+  display: none;
 }
 
 .button-secondary {
@@ -889,6 +1021,19 @@ button.rank-link {
   box-shadow: 0 0 0 2px var(--n-1), 0 0 0 3px var(--n-8);
 }
 
+/* 同曲联动：同一首歌描强调色边，其余封面淡下去。 */
+.mosaic-cover {
+  transition-property: color, background-color, transform, opacity, box-shadow;
+}
+
+.mosaic[data-linked-song] .mosaic-cover:not(.is-linked) {
+  opacity: 0.3;
+}
+
+.mosaic-cover.is-linked {
+  box-shadow: 0 0 0 2px var(--n-1), 0 0 0 3px var(--accent);
+}
+
 /* 点击图表元素后显示的说明，空时不占位。 */
 .detail-line {
   margin: 8px 0 0;
@@ -1332,16 +1477,25 @@ html:has(.drawer[open]) {
   border: 0;
   border-left: 1px solid var(--border);
   color: var(--n-9);
-  background: var(--n-1);
+  --detail-accent: var(--accent);
+  --detail-surface: var(--n-1);
+  background: var(--detail-surface);
   transform: translateX(100%);
   transition:
     transform var(--duration-move) var(--ease),
+    background-color var(--duration-move) var(--ease),
     overlay var(--duration-move) allow-discrete,
     display var(--duration-move) allow-discrete;
 }
 
 .drawer[open] {
   transform: none;
+}
+
+/* 封面取色：色相来自封面，亮度按主题固定，深浅色下都压得住字。 */
+.drawer.has-tone {
+  --detail-accent: hsl(var(--tone-h) var(--tone-s) var(--tone-accent-l));
+  --detail-surface: hsl(var(--tone-h) var(--tone-wash-s) var(--tone-wash-l));
 }
 
 @starting-style {
@@ -1351,7 +1505,7 @@ html:has(.drawer[open]) {
 }
 
 .drawer::backdrop {
-  background: rgba(36, 35, 31, 0);
+  background: transparent;
   transition:
     background-color var(--duration-move) var(--ease),
     overlay var(--duration-move) allow-discrete,
@@ -1359,12 +1513,12 @@ html:has(.drawer[open]) {
 }
 
 .drawer[open]::backdrop {
-  background: rgba(36, 35, 31, 0.24);
+  background: var(--scrim);
 }
 
 @starting-style {
   .drawer[open]::backdrop {
-    background: rgba(36, 35, 31, 0);
+    background: transparent;
   }
 }
 
@@ -1377,7 +1531,7 @@ html:has(.drawer[open]) {
   justify-content: space-between;
   min-height: 60px;
   padding: 0 12px 0 24px;
-  background: rgba(249, 248, 245, 0.9);
+  background: color-mix(in srgb, var(--detail-surface, var(--n-1)) 90%, transparent);
   backdrop-filter: blur(4px);
 }
 
@@ -1539,7 +1693,8 @@ html:has(.drawer[open]) {
 }
 
 .drawer-facts dd.is-accent {
-  color: var(--accent);
+  color: var(--detail-accent);
+  transition: color var(--duration-move) var(--ease);
 }
 
 .drawer-facts dd small {
@@ -1571,6 +1726,11 @@ html:has(.drawer[open]) {
   stroke-width: 1;
 }
 
+.dc-bar,
+.dh-bar {
+  transition: fill var(--duration-move) var(--ease);
+}
+
 .dc-bar {
   fill: var(--n-8);
 }
@@ -1581,7 +1741,7 @@ html:has(.drawer[open]) {
 }
 
 .dc-bar.is-today {
-  fill: var(--accent);
+  fill: var(--detail-accent);
 }
 
 .dc-gap {
@@ -1607,7 +1767,7 @@ html:has(.drawer[open]) {
 }
 
 .dh-bar.is-peak {
-  fill: var(--accent);
+  fill: var(--detail-accent);
 }
 
 .trend-caption .legend-bar {
@@ -1698,6 +1858,64 @@ html:has(.drawer[open]) {
 .reveal.is-revealed {
   opacity: 1;
   transform: none;
+}
+
+/* 切换动画（View Transitions）：排行行按名次滑动、趋势图与日历淡入淡出；
+   data-vt="swap" 时页面其余部分瞬间更新，data-vt="theme" 时整页斜向擦过（见下方 theme-reveal）。 */
+.trend-chart {
+  view-transition-name: trend-chart;
+}
+
+.cal-scroll {
+  view-transition-name: cal-heatmap;
+}
+
+::view-transition-group(*),
+::view-transition-old(*),
+::view-transition-new(*) {
+  animation-duration: var(--duration-move);
+  animation-timing-function: var(--ease);
+}
+
+:root[data-vt="swap"]::view-transition-old(root),
+:root[data-vt="swap"]::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+/* 换主题：新主题从右下角斜着拉开一小段，顿一下，再一路铺到左上角；旧主题留在底下不动。
+   整页作为一张快照擦过去，平时单独命名的区块这时并回根快照，不各自淡入淡出。 */
+:root[data-vt="theme"] .rank-row,
+:root[data-vt="theme"] .trend-chart,
+:root[data-vt="theme"] .cal-scroll {
+  view-transition-name: none !important;
+}
+
+:root[data-vt="theme"]::view-transition-old(root) {
+  animation: none;
+}
+
+:root[data-vt="theme"]::view-transition-new(root) {
+  animation: theme-reveal 1.15s both;
+  mix-blend-mode: normal;
+}
+
+/* 0–30%：缓出拉开到 28%；30–46%：停住约 0.18s；46–100%：缓入缓出铺满（终点越过左上角，边线不留在角上）。 */
+@keyframes theme-reveal {
+  0% {
+    clip-path: polygon(100% 100%, 100% 100%, 100% 100%);
+    animation-timing-function: cubic-bezier(0.16, 1, 0.3, 1);
+  }
+
+  30%,
+  46% {
+    clip-path: polygon(100% 100%, 100% 72%, 72% 100%);
+    animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1);
+  }
+
+  100% {
+    clip-path: polygon(100% 100%, 100% -110%, -110% 100%);
+  }
 }
 
 /* 加载：首屏用与真实布局同形的骨架，切换窗口/翻页时旧内容淡出等待。 */
@@ -1797,7 +2015,13 @@ html:has(.drawer[open]) {
   }
 
   .nav-links {
+    flex-basis: 100%;
     margin-left: -12px;
+  }
+
+  .theme-toggle {
+    order: 0;
+    margin-left: auto;
   }
 
   .page-shell {

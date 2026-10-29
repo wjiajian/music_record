@@ -260,6 +260,51 @@ test('听歌日历复用趋势逐日序列，区分还没开始记录、数据�
   assert.match(html, /<a href="#calendar">日历<\/a>/);
 });
 
+test('深色模式跟随系统也可手动指定，主题在样式生效前写上，颜色只走令牌', () => {
+  assert.match(css, /@media \(prefers-color-scheme: dark\) \{\s*:root:not\(\[data-theme="light"\]\)/);
+  assert.match(css, /:root\[data-theme="dark"\] \{/);
+  assert.ok(html.indexOf("localStorage.getItem('music-record-theme')") < html.indexOf('href="/styles.css"'));
+  assert.match(html, /id="themeToggle"/);
+  assert.doesNotMatch(css, /rgba\(249, 248, 245/);
+});
+
+test('切换动画：排行行带稳定的 view-transition-name，减少动效或不支持时直接替换', () => {
+  const start = source.indexOf('function withViewTransition');
+  const helper = source.slice(start, source.indexOf('\n}\n', start));
+  assert.match(helper, /!document\.startViewTransition \|\| reducedMotion\.matches/);
+  assert.match(source, /row\.style\.viewTransitionName = `rank-\$\{state\.dimension\}-\$\{item\.id\}`/);
+  assert.match(css, /:root\[data-vt="swap"\]::view-transition-old\(root\)/);
+  assert.match(source, /function syncSwitchIndicators/);
+});
+
+test('换主题从右下往左上斜向擦过：先拉开一段、停顿、再铺满，期间整页作为一张快照', () => {
+  const keyframes = css.slice(css.indexOf('@keyframes theme-reveal'), css.indexOf('}\n}', css.indexOf('@keyframes theme-reveal')));
+  assert.match(keyframes, /0% \{\s*clip-path: polygon\(100% 100%, 100% 100%, 100% 100%\)/);
+  assert.match(keyframes, /30%,\s*46% \{\s*clip-path: polygon\(100% 100%, 100% 72%, 72% 100%\)/);
+  assert.match(keyframes, /100% \{\s*clip-path: polygon\(100% 100%, 100% -110%, -110% 100%\)/);
+  assert.match(css, /:root\[data-vt="theme"\]::view-transition-new\(root\) \{\s*animation: theme-reveal/);
+  assert.match(css, /:root\[data-vt="theme"\] \.rank-row,[\s\S]*?view-transition-name: none !important/);
+  assert.match(source, /\}, 'theme'\);/);
+});
+
+test('封面墙同曲联动：指到或聚焦一格时同一首歌高亮，其余变淡', () => {
+  assert.match(source, /function linkMosaicSong/);
+  assert.match(source, /nodes\.mosaic\.addEventListener\('pointerover'/);
+  assert.match(source, /nodes\.mosaic\.addEventListener\('focusin'/);
+  assert.match(css, /\.mosaic\[data-linked-song\] \.mosaic-cover:not\(\.is-linked\)/);
+});
+
+test('封面取色只用于详情抽屉，灰色像素不参与', () => {
+  const start = source.indexOf('function rgbToHsl');
+  const end = source.indexOf('function sampleCoverTone', start);
+  const rgbToHsl = vm.runInNewContext(`${source.slice(start, end)}; rgbToHsl`);
+  assert.deepEqual(JSON.parse(JSON.stringify(rgbToHsl(255, 0, 0))), [0, 1, 0.5]);
+  assert.equal(rgbToHsl(128, 128, 128)[1], 0);
+  assert.ok(Math.abs(rgbToHsl(0, 0, 255)[0] - 2 / 3) < 1e-9);
+  assert.match(css, /\.drawer\.has-tone \{/);
+  assert.equal((css.match(/has-tone/g) || []).length, 1);
+});
+
 test('最近播放显示封面，歌单索引与曲目左右排列', () => {
   const start = source.indexOf('function makeTimedRow');
   const end = source.indexOf('function renderRecent', start);
