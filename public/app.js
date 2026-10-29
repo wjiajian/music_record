@@ -5,18 +5,34 @@ const state = {
   playlistId: null,
   playlistOffset: 0,
   trackOffset: 0,
+  calendarYear: new Date().getFullYear(),
+  calendarMetric: 'plays',
+  calendarDay: null,
 };
 
 let latestHealth = { have_days: 0 };
 let overviewRequestId = 0;
 let rankingRequestId = 0;
 let trendRequestId = 0;
+let calendarRequestId = 0;
+let calendarDayRequestId = 0;
+let detailRequestId = 0;
 let lastTrend = null;
+let lastCalendar = null;
+let calendarDayMap = new Map();
+const calendarTopSongs = new Map();
+// 抽屉里从歌曲点到歌手、专辑时记下来路，「返回」逐层退回；关闭抽屉即清空。
+let currentDetail = null;
+const detailHistory = [];
 
 const PLAYLIST_PAGE_SIZE = 10;
 const TRACK_PAGE_SIZE = 10;
 const MOSAIC_DAYS = 7;
 const MOSAIC_COLUMNS = 10;
+const CALENDAR_DAY_SONGS = 10;
+const DETAIL_CHART_DAYS = 90;
+// 抽屉里「统计窗口」的说法，与顶部窗口按钮一一对应。
+const WINDOW_LABEL = { day: '今天', week: '近 7 天', month: '近 30 天', year: '近一年', all: '全部记录' };
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const numberFormat = new Intl.NumberFormat('zh-CN');
 const percentFormat = new Intl.NumberFormat('zh-CN', { style: 'percent', maximumFractionDigits: 1 });
@@ -53,6 +69,17 @@ const nodes = {
   hourlyMeta: document.querySelector('#hourlyMeta'),
   mosaic: document.querySelector('#mosaic'),
   mosaicSummary: document.querySelector('#mosaicSummary'),
+  calYear: document.querySelector('#calYear'),
+  calSummary: document.querySelector('#calSummary'),
+  calNote: document.querySelector('#calNote'),
+  calHeatmap: document.querySelector('#calHeatmap'),
+  calLegend: document.querySelector('#calLegend'),
+  calDetail: document.querySelector('#calDetail'),
+  drawer: document.querySelector('#drawer'),
+  drawerBody: document.querySelector('#drawerBody'),
+  drawerExternal: document.querySelector('#drawerExternal'),
+  drawerBack: document.querySelector('#drawerBack'),
+  drawerClose: document.querySelector('#drawerClose'),
   footerTimezone: document.querySelector('#footerTimezone'),
 };
 
@@ -242,6 +269,7 @@ function renderSkeletons() {
   nodes.playlistTracks.replaceChildren(...SKELETON_WIDTHS.slice(0, 6).map((width) => skeletonRow('song-row', [
     skeleton('skeleton--cover'), skeletonLines(width), skeleton('skeleton--short'),
   ])));
+  nodes.calHeatmap.replaceChildren(skeleton('skeleton--chart'));
 }
 
 // 悬停提示在触屏上不可见，点击后把同一段说明写到区块下方。
@@ -273,16 +301,16 @@ function createCoverMedia(source, alt) {
   return media;
 }
 
-// 标题即链接：.rank-link 的 ::after 铺满整行，整行可点但只有一个可聚焦元素。
+// 标题即按钮：.rank-link 的 ::after 铺满整行，整行点开详情抽屉，只有一个可聚焦元素。
 function createTitle(text, type, id) {
-  const title = document.createElement(id ? 'a' : 'span');
+  const title = document.createElement(id ? 'button' : 'span');
   title.className = 'rank-title';
   title.textContent = text || '未命名';
   if (id) {
     title.classList.add('rank-link');
-    title.href = `https://music.163.com/#/${type}?id=${encodeURIComponent(id)}`;
-    title.target = '_blank';
-    title.rel = 'noopener noreferrer';
+    title.type = 'button';
+    title.dataset.entity = type;
+    title.dataset.entityId = String(id);
   }
   return title;
 }
@@ -375,6 +403,10 @@ function renderMosaic(payload = null) {
       button.title = label;
       button.dataset.detail = label;
       button.dataset.detailTarget = 'mosaicDetail';
+      if (entry.song?.id) {
+        button.dataset.entity = 'song';
+        button.dataset.entityId = String(entry.song.id);
+      }
       button.append(createCoverMedia(entry.song?.album?.picUrl || entry.song?.picUrl, ''));
       return button;
     }));
@@ -881,6 +913,770 @@ async function loadPlaylistTracks() {
   nodes.playlistTracks.removeAttribute('aria-busy');
 }
 
+// ---- 日期小工具（日历与抽屉共用；'YYYY-MM-DD' 按 UTC 计算，避开夏令时） ----
+
+function isoAddDays(isoDate, days) {
+  const date = new Date(`${isoDate}T00:00:00Z`);
+  date.setUTCDate(date.getUTCDate() + days);
+  return date.toISOString().slice(0, 10);
+}
+
+function isoDayDiff(a, b) {
+  return Math.round((Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / 86400000);
+}
+
+function monthDayLabel(isoDate) {
+  const label = `${Number(isoDate.slice(5, 7))}月${Number(isoDate.slice(8, 10))}日`;
+  return isoDate.slice(0, 4) === String(new Date().getFullYear()) ? label : `${isoDate.slice(0, 4)}年${label}`;
+}
+
+function dayTitle(isoDate) {
+  return `${monthDayLabel(isoDate)} ${WEEKDAYS[new Date(`${isoDate}T00:00:00Z`).getUTCDay()]}`;
+}
+
+function hoursLabel(minutes) {
+  return (Math.round((minutes || 0) / 6) / 10).toFixed(1);
+}
+
+// 连续日期合并成「9月20–21日」。
+function dateRanges(dates) {
+  const groups = [];
+  for (const date of dates) {
+    const last = groups.at(-1);
+    if (last && isoDayDiff(date, last.at(-1)) === 1) last.push(date);
+    else groups.push([date]);
+  }
+  return groups.map((group) => {
+    const [first, last] = [group[0], group.at(-1)];
+    if (first === last) return monthDayLabel(first);
+    return first.slice(0, 7) === last.slice(0, 7)
+      ? `${monthDayLabel(first).replace(/日$/, '')}–${Number(last.slice(8))}日`
+      : `${monthDayLabel(first)}–${monthDayLabel(last)}`;
+  });
+}
+
+// ---- 听歌日历：直接用趋势接口的逐日序列，「数据未知 / 下界 / 日期不确定」口径与趋势图一致 ----
+
+// 第一个有记录的日子之前算「还没开始记录」，之后的 missing 才是数据未知。
+function calendarDays(series) {
+  const startIndex = series.findIndex((point) => !point.missing);
+  return series.map((point, index) => ({
+    ...point,
+    date: point.start,
+    state: startIndex < 0 || index < startIndex ? 'blank'
+      : point.missing ? 'gap'
+        : point.estimated ? 'estimated'
+          : point.plays > 0 ? 'played' : 'zero',
+  }));
+}
+
+function calendarValue(day) {
+  return state.calendarMetric === 'minutes' ? day.est_minutes || 0 : day.plays || 0;
+}
+
+function calendarStats(days) {
+  const recorded = days.filter((day) => day.state !== 'blank');
+  const played = recorded.filter((day) => day.state === 'played');
+  const ranked = played
+    .filter((day) => !day.is_current && calendarValue(day) > 0)
+    .sort((a, b) => calendarValue(b) - calendarValue(a));
+  // 数据未知或日期不确定的日子都会打断连续记录：那几天是否在听无法确认。
+  let streak = null;
+  let run = null;
+  for (const day of recorded) {
+    if (day.state === 'played') {
+      run = run ? { ...run, end: day.date, length: run.length + 1 } : { start: day.date, end: day.date, length: 1 };
+      if (!streak || run.length > streak.length) streak = run;
+    } else {
+      run = null;
+    }
+  }
+  // 与 GitHub 贡献图一样按四分位分档：少数特别多的日子不会把其余格子都压成最浅。
+  const values = recorded
+    .filter((day) => (day.state === 'played' || day.state === 'estimated') && calendarValue(day) > 0)
+    .map(calendarValue)
+    .sort((a, b) => a - b);
+  const quantile = (share) => values[Math.min(values.length - 1, Math.floor(share * values.length))] || 0;
+  return {
+    firstRecorded: recorded[0]?.date || null,
+    listened: played.length,
+    streak,
+    peak: ranked[0] || null,
+    thresholds: [quantile(0.25), quantile(0.5), quantile(0.75)],
+    gaps: recorded.filter((day) => day.state === 'gap').map((day) => day.date),
+  };
+}
+
+function calendarLevel(value, thresholds) {
+  if (value <= 0) return 0;
+  const index = thresholds.findIndex((limit) => value <= limit);
+  return index < 0 ? 4 : index + 1;
+}
+
+function calendarDayText(day) {
+  const count = `${day.lower_bound ? '至少 ' : ''}${formatNumber(day.plays)} 次`;
+  if (day.state === 'blank') return '还没开始记录';
+  if (day.state === 'gap') return '数据未知';
+  if (day.state === 'zero') return '没有播放';
+  if (day.state === 'estimated') return `${count}，具体日期不确定`;
+  if (day.is_current) return `今天，已记下 ${count}`;
+  return `${count}，约 ${hoursLabel(day.est_minutes)} 小时`;
+}
+
+function renderCalendarSummary(days, stats) {
+  const thisYear = state.calendarYear === new Date().getFullYear();
+  const clauses = [`${thisYear ? '今年' : `${state.calendarYear} 年`}有 ${formatNumber(stats.listened)} 天在听`];
+  if (stats.streak?.length > 1) {
+    clauses.push(`最长连着听了 ${formatNumber(stats.streak.length)} 天（${monthDayLabel(stats.streak.start)}–${monthDayLabel(stats.streak.end)}）`);
+  }
+  let summary = `${clauses.join('，')}。`;
+  if (stats.peak) {
+    const peak = stats.peak;
+    summary += state.calendarMetric === 'minutes'
+      ? `听得最久的是 ${monthDayLabel(peak.date)}，约 ${hoursLabel(peak.est_minutes)} 小时。`
+      : `听得最多的是 ${monthDayLabel(peak.date)}，${peak.lower_bound ? '至少 ' : ''}${formatNumber(peak.plays)} 次。`;
+  }
+  nodes.calSummary.textContent = summary;
+
+  const notes = [];
+  if (stats.firstRecorded > `${state.calendarYear}-01-01`) notes.push(`从 ${monthDayLabel(stats.firstRecorded)}开始记录。`);
+  if (stats.gaps.length) {
+    const ranges = dateRanges(stats.gaps);
+    notes.push(ranges.length <= 3
+      ? `${ranges.join('、')}数据未知，画成斜纹格。`
+      : `有 ${formatNumber(stats.gaps.length)} 天数据未知，画成斜纹格。`);
+  }
+  if (days.some((day) => day.state === 'estimated')) notes.push('补记的次数无法确定具体日期，画成空心格。');
+  if (days.some((day) => day.lower_bound && day.state === 'played')) notes.push('≥ 表示已记录到的最低次数。');
+  nodes.calNote.textContent = notes.join('');
+}
+
+// GitHub 式年历：一列一周、一行一天（周一在上），整年 53 列左右；今年只画到今天。
+function renderCalendarGrid(days, stats) {
+  const year = state.calendarYear;
+  const jan1 = `${year}-01-01`;
+  const gridStart = isoAddDays(jan1, -((new Date(`${jan1}T00:00:00Z`).getUTCDay() + 6) % 7));
+  const weeks = Math.floor(isoDayDiff(`${year}-12-31`, gridStart) / 7) + 1;
+  const grid = document.createElement('div');
+  grid.className = 'cal-grid';
+  grid.style.setProperty('--weeks', String(weeks));
+
+  for (let month = 1; month <= 12; month += 1) {
+    const label = document.createElement('span');
+    label.className = 'cal-grid__month';
+    label.setAttribute('aria-hidden', 'true');
+    label.textContent = `${month}月`;
+    const column = Math.floor(isoDayDiff(`${year}-${String(month).padStart(2, '0')}-01`, gridStart) / 7);
+    label.style.gridColumn = `${column + 2} / span 4`;
+    grid.append(label);
+  }
+  for (const [row, text] of [[1, '一'], [3, '三'], [5, '五']]) {
+    const label = document.createElement('span');
+    label.className = 'cal-grid__weekday';
+    label.setAttribute('aria-hidden', 'true');
+    label.textContent = text;
+    label.style.gridRow = String(row + 1);
+    grid.append(label);
+  }
+
+  for (const day of days) {
+    const index = isoDayDiff(day.date, gridStart);
+    const blank = day.state === 'blank';
+    const cell = document.createElement(blank ? 'span' : 'button');
+    cell.className = 'cal-cell';
+    cell.dataset.state = day.state;
+    cell.style.gridColumn = String(Math.floor(index / 7) + 2);
+    cell.style.gridRow = String((index % 7) + 2);
+    if (!blank) {
+      cell.type = 'button';
+      cell.tabIndex = -1;
+      cell.dataset.date = day.date;
+      if (day.state !== 'gap') cell.dataset.level = String(calendarLevel(calendarValue(day), stats.thresholds));
+      cell.classList.toggle('is-today', Boolean(day.is_current));
+      cell.setAttribute('aria-label', `${dayTitle(day.date)}：${calendarDayText(day)}`);
+      cell.title = cell.getAttribute('aria-label');
+    }
+    grid.append(cell);
+  }
+  nodes.calHeatmap.replaceChildren(grid);
+  // 手机上一屏放不下整年：让最近有记录的那一列贴着右边，而不是滚到年底的空白。
+  const latest = [...grid.querySelectorAll('button.cal-cell')].at(-1);
+  if (latest && nodes.calHeatmap.scrollWidth > nodes.calHeatmap.clientWidth) {
+    const overflow = latest.getBoundingClientRect().right - nodes.calHeatmap.getBoundingClientRect().right;
+    nodes.calHeatmap.scrollLeft = Math.max(0, nodes.calHeatmap.scrollLeft + overflow + 8);
+  }
+}
+
+function legendSwatch(stateName, level = null, extraClass = '') {
+  const swatch = document.createElement('i');
+  swatch.className = `cal-cell ${extraClass}`.trim();
+  swatch.dataset.state = stateName;
+  if (level !== null) swatch.dataset.level = String(level);
+  return swatch;
+}
+
+function renderCalendarLegend(days, stats) {
+  const keys = document.createElement('span');
+  keys.className = 'cal-legend__keys';
+  for (const [show, swatch, label] of [
+    [stats.gaps.length > 0, legendSwatch('gap'), '数据未知'],
+    [days.some((day) => day.state === 'estimated'), legendSwatch('estimated', 2), '日期不确定'],
+    [days.some((day) => day.state === 'blank'), legendSwatch('blank'), '还没开始记录'],
+    [days.some((day) => day.is_current), legendSwatch('zero', 0, 'is-today'), '今天'],
+  ]) {
+    if (!show) continue;
+    const item = document.createElement('span');
+    item.append(swatch, document.createTextNode(label));
+    keys.append(item);
+  }
+  const scale = document.createElement('span');
+  scale.className = 'cal-legend__scale';
+  scale.append(document.createTextNode('少'));
+  for (let level = 0; level <= 4; level += 1) scale.append(legendSwatch(level ? 'played' : 'zero', level));
+  scale.append(document.createTextNode(state.calendarMetric === 'minutes' ? '久' : '多'));
+  nodes.calLegend.replaceChildren(keys, scale);
+}
+
+function syncCalendarControls() {
+  const thisYear = new Date().getFullYear();
+  const firstYear = Number((latestHealth.first_date || '').slice(0, 4)) || thisYear;
+  nodes.calYear.textContent = String(state.calendarYear);
+  document.querySelector('[data-cal-year="-1"]').disabled = state.calendarYear <= firstYear;
+  document.querySelector('[data-cal-year="1"]').disabled = state.calendarYear >= thisYear;
+  document.querySelectorAll('[data-cal-metric]').forEach((tab) => {
+    const active = tab.dataset.calMetric === state.calendarMetric;
+    tab.classList.toggle('is-active', active);
+    tab.setAttribute('aria-pressed', String(active));
+  });
+}
+
+// 日历只占一个 Tab 位：选中的那天（没有就第一天）可聚焦，其余用方向键到达。
+function syncCalendarSelection() {
+  const cells = [...nodes.calHeatmap.querySelectorAll('button.cal-cell')];
+  const focusable = cells.find((cell) => cell.dataset.date === state.calendarDay) || cells[0];
+  for (const cell of cells) {
+    const selected = cell.dataset.date === state.calendarDay;
+    cell.classList.toggle('is-selected', selected);
+    cell.setAttribute('aria-pressed', String(selected));
+    cell.tabIndex = cell === focusable ? 0 : -1;
+  }
+}
+
+function renderCalendar(payload) {
+  lastCalendar = payload;
+  syncCalendarControls();
+  const clear = () => {
+    nodes.calSummary.textContent = '';
+    nodes.calNote.textContent = '';
+    nodes.calLegend.replaceChildren();
+    nodes.calDetail.hidden = true;
+  };
+  if (!payload || payload.error) {
+    clear();
+    nodes.calHeatmap.replaceChildren(emptyState('日历读取失败', payload?.error || '请稍后重试', { kind: 'error' }));
+    return;
+  }
+  if (payload.insufficientData) {
+    clear();
+    nodes.calHeatmap.replaceChildren(emptyState('数据不足', getInsufficientText(payload, latestHealth.have_days), { kind: 'insufficient' }));
+    return;
+  }
+  const days = calendarDays(payload.series || []);
+  calendarDayMap = new Map(days.map((day) => [day.date, day]));
+  const stats = calendarStats(days);
+  if (!stats.firstRecorded) {
+    clear();
+    nodes.calHeatmap.replaceChildren(emptyState('这一年还没有记录', '', { kind: 'insufficient' }));
+    return;
+  }
+  renderCalendarSummary(days, stats);
+  renderCalendarGrid(days, stats);
+  renderCalendarLegend(days, stats);
+
+  // 默认看今天；翻到往年时看那年听得最多的一天。
+  const selected = calendarDayMap.get(state.calendarDay);
+  if (!selected || selected.state === 'blank') {
+    const fallback = days.find((day) => day.is_current && day.state !== 'blank') || stats.peak
+      || [...days].reverse().find((day) => day.state !== 'blank');
+    state.calendarDay = fallback.date;
+  }
+  selectCalendarDay(state.calendarDay);
+}
+
+async function loadCalendar() {
+  const requestId = ++calendarRequestId;
+  // 每日快照会补进昨天的差分，刷新时不能沿用旧的当天歌曲。
+  calendarTopSongs.clear();
+  const thisYear = state.calendarYear === new Date().getFullYear();
+  nodes.calHeatmap.setAttribute('aria-busy', 'true');
+  // 今年不传 to，由服务端按统计时区取「今天」，与趋势图对齐。
+  const params = { granularity: 'day', from: `${state.calendarYear}-01-01` };
+  if (!thisYear) params.to = `${state.calendarYear}-12-31`;
+  const payload = await getJson('/api/trend', params).catch((error) => ({ error: error.message }));
+  if (requestId !== calendarRequestId) return;
+  renderCalendar(payload);
+  nodes.calHeatmap.removeAttribute('aria-busy');
+}
+
+function renderCalendarDetail(day, tops) {
+  nodes.calDetail.hidden = false;
+  const head = document.createElement('div');
+  head.className = 'cal-detail__head';
+  const title = document.createElement('h3');
+  title.textContent = dayTitle(day.date);
+  const meta = document.createElement('span');
+  head.append(title, meta);
+
+  const text = (content) => {
+    const paragraph = document.createElement('p');
+    paragraph.className = 'cal-detail__text';
+    paragraph.textContent = content;
+    return paragraph;
+  };
+  const count = `${day.lower_bound ? '至少 ' : ''}${formatNumber(day.plays)} 次`;
+  if (day.state === 'gap') {
+    meta.textContent = '数据未知';
+    nodes.calDetail.replaceChildren(head, text('这天的播放没有完整记下，无法知道听了多少。'));
+    return;
+  }
+  if (day.state === 'zero') {
+    meta.textContent = '0 次';
+    nodes.calDetail.replaceChildren(head, text('这天没有播放。'));
+    return;
+  }
+
+  const songs = tops?.songs?.length && !tops.error ? `，${formatNumber(tops.distinct_songs)} 首歌` : '';
+  meta.textContent = day.is_current
+    ? `进行中，已记下 ${count}`
+    : day.state === 'estimated' ? `${count}，日期不确定` : `${count}${songs}，约 ${hoursLabel(day.est_minutes)} 小时`;
+  const parts = [head];
+  if (day.state === 'estimated') parts.push(text(`这 ${formatNumber(day.plays)} 次可能包含前几天没记下的播放，具体哪天听的无法确定。`));
+
+  // 与首页排行同一种行：名次、封面、歌名、次数；宽屏分两列，省一半高度。
+  const list = document.createElement('ol');
+  list.className = 'cal-detail__songs';
+  let rows;
+  if (!tops) {
+    rows = SKELETON_WIDTHS.slice(0, CALENDAR_DAY_SONGS).map((width) => skeletonRow('rank-row', [
+      skeleton('skeleton--short'), skeleton('skeleton--cover'), skeletonLines(width), skeleton('skeleton--short'),
+    ]));
+  } else if (tops.error) {
+    rows = [emptyState('这天的歌曲读取失败', tops.error, { kind: 'error', tag: 'li' })];
+  } else {
+    rows = (tops.songs || []).map((entry) => {
+      const row = document.createElement('li');
+      row.className = 'rank-row';
+      const index = document.createElement('span');
+      index.className = 'rank-index';
+      index.textContent = String(entry.rank).padStart(2, '0');
+      const cover = document.createElement('span');
+      cover.className = 'rank-cover';
+      cover.append(createCoverMedia(entry.song?.album?.picUrl, ''));
+      const main = document.createElement('span');
+      main.className = 'rank-main';
+      const subtitle = document.createElement('span');
+      subtitle.className = 'rank-subtitle';
+      subtitle.textContent = songSubtitle(entry.song);
+      main.append(createTitle(entry.song?.name, 'song', entry.song?.id), subtitle);
+      const value = document.createElement('span');
+      value.className = 'rank-value';
+      value.textContent = `${tops.lower_bound ? '≥' : ''}${formatNumber(entry.plays)} 次`;
+      row.append(index, cover, main, value);
+      return row;
+    });
+  }
+  // 两列竖排：先排满左列再排右列，名次从上往下读。
+  list.style.setProperty('--rows', String(Math.max(Math.ceil(rows.length / 2), 1)));
+  list.append(...rows);
+  parts.push(list);
+  nodes.calDetail.replaceChildren(...parts);
+}
+
+async function selectCalendarDay(date) {
+  const day = calendarDayMap.get(date);
+  if (!day || day.state === 'blank') return;
+  state.calendarDay = date;
+  syncCalendarSelection();
+  const requestId = ++calendarDayRequestId;
+  const needsSongs = day.state === 'played' || day.state === 'estimated';
+  // 今天还在变，不缓存。
+  const cached = day.is_current ? null : calendarTopSongs.get(date);
+  renderCalendarDetail(day, needsSongs ? cached : null);
+  if (!needsSongs || cached) return;
+  const payload = await getJson('/api/daily-top-songs', { days: 1, to: date, limit: CALENDAR_DAY_SONGS })
+    .catch((error) => ({ error: error.message }));
+  const tops = payload.error ? { error: payload.error } : payload.items?.[0] || { songs: [] };
+  if (!tops.error && !day.is_current) calendarTopSongs.set(date, tops);
+  if (requestId === calendarDayRequestId) renderCalendarDetail(day, tops);
+}
+
+// ---- 详情抽屉：歌曲 / 歌手 / 专辑 ----
+
+function drawerLink(text, dimension, id) {
+  if (!id) return document.createTextNode(text || '');
+  const button = document.createElement('button');
+  button.className = 'drawer__link';
+  button.type = 'button';
+  button.dataset.entity = dimension;
+  button.dataset.entityId = String(id);
+  button.textContent = text || '未命名';
+  return button;
+}
+
+function joinedLinks(className, items, dimension) {
+  const line = document.createElement('p');
+  line.className = className;
+  items.forEach((item, index) => {
+    if (index) line.append(document.createTextNode(' / '));
+    line.append(drawerLink(item.name, dimension, item.id));
+  });
+  return line;
+}
+
+function detailSectionHead(title, meta = '') {
+  const head = document.createElement('div');
+  head.className = 'hourly__head';
+  const heading = document.createElement('h3');
+  heading.textContent = title;
+  const note = document.createElement('p');
+  note.textContent = meta;
+  head.append(heading, note);
+  return head;
+}
+
+function detailFact(label, value, unit, { lowerBound = false, accent = false } = {}) {
+  const item = document.createElement('div');
+  const term = document.createElement('dt');
+  term.textContent = label;
+  const data = document.createElement('dd');
+  if (accent) data.className = 'is-accent';
+  if (lowerBound) {
+    const prefix = document.createElement('span');
+    prefix.className = 'metric-prefix';
+    prefix.textContent = '≥';
+    data.append(prefix);
+  }
+  data.append(document.createTextNode(value));
+  if (unit) {
+    const small = document.createElement('small');
+    small.textContent = unit;
+    data.append(small);
+  }
+  item.append(term, data);
+  return item;
+}
+
+function detailEmpty(text) {
+  const paragraph = document.createElement('p');
+  paragraph.className = 'drawer__empty';
+  paragraph.textContent = text;
+  return paragraph;
+}
+
+// 近 90 天逐日柱：缺口画浅色竖带、日期不确定用浅色柱、今天用强调色；指针跟随显示当天读数。
+function detailDailyChart(trend) {
+  if (!trend || trend.error || trend.insufficientData || !trend.series?.length) {
+    return [detailEmpty(trend?.error ? `逐日记录读取失败：${trend.error}` : '还没有逐日记录。')];
+  }
+  const series = trend.series;
+  const width = 392;
+  const top = 4;
+  const base = 64;
+  const slot = width / series.length;
+  const barWidth = Math.max(1.5, Math.min(slot * 0.6, 8));
+  const max = Math.max(...series.map((point) => point.plays || 0), 1);
+  const total = series.reduce((sum, point) => sum + (point.plays || 0), 0);
+  const active = series.filter((point) => point.plays > 0).length;
+  const lowerBound = series.some((point) => point.lower_bound);
+  const span = series.length >= DETAIL_CHART_DAYS ? `近 ${DETAIL_CHART_DAYS} 天` : `${monthDayLabel(series[0].start)}以来`;
+  const summary = total
+    ? `${span}${lowerBound ? '至少' : ''}听了 ${formatNumber(total)} 次，分布在 ${formatNumber(active)} 天里`
+    : `${span}没有记下播放`;
+
+  const svg = makeSvgElement('svg', { viewBox: `0 0 ${width} ${base + 22}`, role: 'img', 'aria-label': summary });
+  const hover = makeSvgElement('rect', { x: 0, y: top, width: slot, height: base - top, class: 'dc-hover' });
+  svg.append(hover);
+  series.forEach((point, index) => {
+    if (point.missing) svg.append(makeSvgElement('rect', { x: index * slot, y: top, width: slot, height: base - top, class: 'dc-gap' }));
+  });
+  svg.append(makeSvgElement('line', { x1: 0, y1: base + 0.5, x2: width, y2: base + 0.5, class: 'dc-base' }));
+  series.forEach((point, index) => {
+    if (!point.plays) return;
+    const height = Math.max(2, (point.plays / max) * (base - top));
+    const variant = point.is_current ? ' is-today' : point.estimated ? ' is-uncertain' : '';
+    svg.append(makeSvgElement('rect', {
+      x: index * slot + (slot - barWidth) / 2, y: base - height, width: barWidth, height, class: `dc-bar${variant}`,
+    }));
+  });
+  const endLabel = series.at(-1).is_current ? '今天' : monthDayLabel(series.at(-1).start);
+  const labels = series
+    .map((point, index) => ({ point, index }))
+    .filter(({ point, index }) => point.start.endsWith('-01') && index * slot < width - 48);
+  if (!labels.length) labels.push({ point: series[0], index: 0, text: monthDayLabel(series[0].start) });
+  for (const { point, index, text } of labels) {
+    const label = makeSvgElement('text', { x: index * slot, y: base + 18, class: 'trend-axis-label' });
+    label.textContent = text || `${Number(point.start.slice(5, 7))}月`;
+    svg.append(label);
+  }
+  const last = makeSvgElement('text', { x: width, y: base + 18, 'text-anchor': 'end', class: 'trend-axis-label' });
+  last.textContent = endLabel;
+  svg.append(last);
+
+  const detail = document.createElement('p');
+  detail.className = 'detail-line';
+  detail.textContent = summary;
+  svg.addEventListener('pointermove', (event) => {
+    const rect = svg.getBoundingClientRect();
+    const index = Math.min(series.length - 1, Math.max(0, Math.floor(((event.clientX - rect.left) / rect.width) * series.length)));
+    const point = series[index];
+    hover.setAttribute('x', index * slot);
+    hover.classList.add('is-on');
+    const count = `${point.lower_bound ? '至少 ' : ''}${formatNumber(point.plays)} 次`;
+    const reading = point.missing ? '数据未知'
+      : point.is_current ? `今天，已记下 ${count}`
+        : point.estimated ? `${count}，具体日期不确定` : count;
+    detail.textContent = `${dayTitle(point.start)}：${reading}`;
+  });
+  svg.addEventListener('pointerleave', () => {
+    hover.classList.remove('is-on');
+    detail.textContent = summary;
+  });
+
+  const figure = document.createElement('div');
+  figure.className = 'drawer-chart';
+  figure.append(svg);
+  const caption = document.createElement('div');
+  caption.className = 'trend-caption';
+  for (const [show, className, label] of [
+    [true, 'legend-bar', '每天播放'],
+    [series.some((point) => point.estimated && point.plays), 'legend-uncertain', '日期不确定'],
+    [series.some((point) => point.missing), 'legend-gap', '数据未知'],
+  ]) {
+    if (!show) continue;
+    const item = document.createElement('span');
+    const marker = document.createElement('i');
+    marker.className = className;
+    item.append(marker, document.createTextNode(label));
+    caption.append(item);
+  }
+  return [figure, detail, caption];
+}
+
+function detailHourlyChart(hourly) {
+  const buckets = hourly?.buckets || [];
+  const max = Math.max(...buckets.map((bucket) => bucket.plays), 0);
+  if (buckets.length !== 24 || !max) return { content: detailEmpty('近 30 天没有能对应到小时的播放。'), meta: '近 30 天' };
+  const peaks = buckets.filter((bucket) => bucket.plays && bucket.plays / max >= 0.8).map((bucket) => bucket.hour);
+  const width = 392;
+  const base = 40;
+  const slot = width / 24;
+  const meta = `近 30 天，高峰 ${peaks.map((hour) => String(hour).padStart(2, '0')).join('、')} 时`;
+  const svg = makeSvgElement('svg', { viewBox: `0 0 ${width} ${base + 20}`, role: 'img', 'aria-label': `按小时的播放分布，${meta}` });
+  for (const bucket of buckets) {
+    const height = bucket.plays ? Math.max(2, (bucket.plays / max) * base) : 1;
+    const variant = bucket.plays ? (peaks.includes(bucket.hour) ? ' is-peak' : '') : ' is-empty';
+    const bar = makeSvgElement('rect', {
+      x: bucket.hour * slot + slot * 0.15, y: base - height, width: slot * 0.7, height, rx: 1, class: `dh-bar${variant}`,
+    });
+    const tooltip = makeSvgElement('title');
+    tooltip.textContent = `${String(bucket.hour).padStart(2, '0')} 时：${formatNumber(bucket.plays)} 次`;
+    bar.append(tooltip);
+    svg.append(bar);
+  }
+  for (const hour of [0, 6, 12, 18, 23]) {
+    const label = makeSvgElement('text', { x: hour * slot + slot / 2, y: base + 16, 'text-anchor': 'middle', class: 'trend-axis-label' });
+    label.textContent = String(hour).padStart(2, '0');
+    svg.append(label);
+  }
+  const figure = document.createElement('div');
+  figure.className = 'drawer-chart';
+  figure.append(svg);
+  return { content: figure, meta };
+}
+
+function recentPlayLabel(value) {
+  const date = toLocalDate(value);
+  if (!date) return ['未知时间', ''];
+  const time = date.toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit', hour12: false });
+  const iso = date.toLocaleDateString('en-CA');
+  const offset = isoDayDiff(new Date().toLocaleDateString('en-CA'), iso);
+  const when = offset === 0 ? '今天' : offset === 1 ? '昨天' : dayTitle(iso);
+  return [when, time];
+}
+
+function detailList(rows) {
+  const list = document.createElement('ol');
+  list.className = 'drawer-list';
+  for (const [text, aside, className = 'when'] of rows) {
+    const item = document.createElement('li');
+    const main = document.createElement('span');
+    main.className = className;
+    main.textContent = text;
+    const side = document.createElement('span');
+    side.className = 'aside';
+    side.textContent = aside;
+    item.append(main, side);
+    list.append(item);
+  }
+  return list;
+}
+
+function renderDetail(detail, trend, windowKey) {
+  if (!detail || detail.error) {
+    const notFound = /^404\b/.test(detail?.error || '');
+    const failure = emptyState(
+      notFound ? '本地还没有这条记录' : '详情读取失败',
+      notFound ? '采集器下一次抓取后就能看到。' : detail?.error || '请稍后重试',
+      { kind: notFound ? 'insufficient' : 'error' },
+    );
+    failure.querySelector('strong').id = 'drawerTitle';
+    nodes.drawerBody.replaceChildren(failure);
+    return;
+  }
+  const { entity, meta, window: windowTotals, all } = detail;
+  const dimension = meta.dimension;
+  const windowLabel = WINDOW_LABEL[windowKey] || WINDOW_LABEL.month;
+  const allLowerBound = Boolean(meta.all_data_quality?.lower_bound);
+
+  const head = document.createElement('header');
+  head.className = 'drawer__head';
+  const cover = document.createElement('span');
+  cover.className = 'drawer__cover';
+  const pic = dimension === 'song' ? entity.album?.picUrl : entity.picUrl;
+  cover.append(pic ? createCoverMedia(pic, '') : icon(dimension === 'artist' ? 'mic2' : 'music'));
+  const titleBlock = document.createElement('div');
+  titleBlock.className = 'drawer__title';
+  const title = document.createElement('h2');
+  title.id = 'drawerTitle';
+  title.textContent = entity.name || '未命名';
+  titleBlock.append(title);
+  if (entity.artists?.length) titleBlock.append(joinedLinks('drawer__artists', entity.artists, 'artist'));
+  if (dimension === 'song' && entity.album?.id) {
+    const album = document.createElement('p');
+    album.className = 'drawer__album';
+    album.append(drawerLink(entity.album.name, 'album', entity.album.id));
+    titleBlock.append(album);
+  }
+  if (windowTotals.rank) {
+    const rank = document.createElement('p');
+    rank.className = 'drawer__album';
+    rank.textContent = `${windowLabel}排第 ${formatNumber(windowTotals.rank)}`;
+    titleBlock.append(rank);
+  }
+  head.append(cover, titleBlock);
+
+  const facts = document.createElement('dl');
+  facts.className = 'drawer-facts';
+  if (windowKey !== 'all') {
+    facts.append(detailFact(windowLabel, formatNumber(windowTotals.plays), '次', {
+      lowerBound: Boolean(meta.data_quality?.lower_bound), accent: true,
+    }));
+  }
+  facts.append(
+    detailFact('全部记录', formatNumber(all.plays), '次', { lowerBound: allLowerBound, accent: windowKey === 'all' }),
+    detailFact('累计时长', hoursLabel(all.est_minutes), '小时', { lowerBound: allLowerBound }),
+    detailFact('第一次记录', all.first_date ? monthDayLabel(all.first_date) : '--', ''),
+  );
+  if (windowKey === 'all') facts.append(detailFact('最近一次', all.last_date ? monthDayLabel(all.last_date) : '--', ''));
+
+  const daily = document.createElement('section');
+  daily.className = 'drawer-section';
+  daily.append(detailSectionHead('每天听了几次', `近 ${DETAIL_CHART_DAYS} 天`), ...detailDailyChart(trend));
+
+  const hourly = document.createElement('section');
+  hourly.className = 'drawer-section';
+  const hourlyChart = detailHourlyChart(detail.hourly);
+  hourly.append(detailSectionHead('一天里什么时候听', hourlyChart.meta), hourlyChart.content);
+
+  const sections = [head, facts, daily, hourly];
+  if (dimension === 'song') {
+    const recent = document.createElement('section');
+    recent.className = 'drawer-section';
+    recent.append(detailSectionHead('最近几次'), detail.recent_plays?.length
+      ? detailList(detail.recent_plays.map(recentPlayLabel))
+      : detailEmpty('最近播放里还没出现过这首歌。'));
+    const lists = document.createElement('section');
+    lists.className = 'drawer-section';
+    lists.append(
+      detailSectionHead('收在这些歌单里', detail.playlists?.length ? `${formatNumber(detail.playlists.length)} 个` : ''),
+      detail.playlists?.length
+        ? detailList(detail.playlists.map((item) => [item.name || '未命名歌单', `${formatNumber(item.trackCount)} 首`, 'name']))
+        : detailEmpty('还没收进任何歌单。'),
+    );
+    sections.push(recent, lists);
+  } else {
+    const songs = document.createElement('section');
+    songs.className = 'drawer-section';
+    const songList = document.createElement('ol');
+    songList.append(...(detail.top_songs || []).map((song) => makeSongRow(song, `${formatNumber(song.plays)} 次`)));
+    songs.append(
+      detailSectionHead(windowKey === 'all' ? '最常听的歌' : `${windowLabel}最常听的歌`),
+      songList.childElementCount ? songList : detailEmpty(`${windowLabel}没有播放。`),
+    );
+    sections.push(songs);
+  }
+
+  const notes = [];
+  if (allLowerBound) notes.push('≥ 表示已记录到的最低次数，部分时段的播放没有完整记下。');
+  if (all.first_date && meta.data_first_date && isoDayDiff(all.first_date, meta.data_first_date) < 7) {
+    notes.push(`记录从 ${monthDayLabel(meta.data_first_date)}开始，在那之前听过多少无从得知。`);
+  }
+  if (detail.hourly?.unlocated_plays) {
+    notes.push(`近 30 天另有 ${formatNumber(detail.hourly.unlocated_plays)} 次只记到了天，没有算进小时分布。`);
+  }
+  if (notes.length) {
+    const note = document.createElement('p');
+    note.className = 'drawer__note';
+    note.textContent = notes.join('');
+    sections.push(note);
+  }
+  nodes.drawerBody.replaceChildren(...sections);
+}
+
+function renderDetailSkeleton() {
+  const head = document.createElement('div');
+  head.className = 'drawer__head';
+  const titleBlock = document.createElement('div');
+  titleBlock.className = 'drawer__title';
+  const title = document.createElement('h2');
+  title.id = 'drawerTitle';
+  title.setAttribute('aria-label', '正在读取');
+  title.append(skeleton('skeleton--line', { w: '70%' }));
+  titleBlock.append(title, skeleton('skeleton--line is-sub', { w: '70%' }));
+  head.append(skeleton('drawer__cover'), titleBlock);
+  nodes.drawerBody.replaceChildren(head, skeleton('skeleton--chart'));
+}
+
+async function openDetail(dimension, id, { remember = true } = {}) {
+  const requestId = ++detailRequestId;
+  // 打开那一刻的统计窗口；抽屉开着时窗口按钮被遮罩挡住，不会中途变化。
+  const windowKey = state.window;
+  const navigating = nodes.drawer.open;
+  if (navigating && remember && currentDetail) detailHistory.push(currentDetail);
+  currentDetail = { dimension, id };
+  nodes.drawerBack.hidden = !detailHistory.length;
+  nodes.drawerExternal.href = `https://music.163.com/#/${dimension}?id=${encodeURIComponent(id)}`;
+  nodes.drawerBody.setAttribute('aria-busy', 'true');
+  renderDetailSkeleton();
+  if (!navigating) nodes.drawer.showModal();
+  nodes.drawer.scrollTop = 0;
+  const [detail, trend] = await Promise.all([
+    getJson(`/api/detail/${dimension}/${encodeURIComponent(id)}`, { period: windowKey }).catch((error) => ({ error: error.message })),
+    getJson('/api/trend', { granularity: 'day', last: DETAIL_CHART_DAYS, [`${dimension}_id`]: id }).catch((error) => ({ error: error.message })),
+  ]);
+  if (requestId !== detailRequestId) return;
+  renderDetail(detail, trend, windowKey);
+  nodes.drawerBody.removeAttribute('aria-busy');
+  // 抽屉内换内容时，原先聚焦的按钮已被移除；把焦点交给新标题，读屏会念出换到了谁。
+  if (navigating) {
+    const title = document.getElementById('drawerTitle');
+    if (title) {
+      title.tabIndex = -1;
+      title.focus({ preventScroll: true });
+    }
+  }
+}
+
 // 统计窗口同时决定概览与排行，不触发趋势、封面、最近播放或歌单请求。
 async function loadWindowData() {
   setActiveButtons();
@@ -940,6 +1736,7 @@ async function loadDashboard() {
     latestHealth = health;
     renderHealth(health);
     const playlistPromise = loadPlaylists();
+    const calendarPromise = loadCalendar();
     const recentPromise = getJson('/api/netease/record/recent/song', { limit: 30 })
       .catch((error) => ({ error: error.message }));
     const [overview, ranking, trend, dailyTops, hourly] = await Promise.all([
@@ -957,6 +1754,7 @@ async function loadDashboard() {
     renderRecent(await recentPromise);
     await playlistPromise;
     await loadPlaylistTracks();
+    await calendarPromise;
   } catch (error) {
     nodes.serviceStatus.dataset.state = 'error';
     nodes.serviceStatusText.textContent = '服务不可用';
@@ -969,6 +1767,7 @@ async function loadDashboard() {
     nodes.trendChart.replaceChildren(emptyState('读取失败', error.message, { kind: 'error' }));
     nodes.hourlyHeatmap.replaceChildren(emptyState('读取失败', error.message, { kind: 'error' }));
     renderMosaic({ error: error.message });
+    renderCalendar({ error: error.message });
   } finally {
     nodes.refreshButton.disabled = false;
     nodes.refreshButton.removeAttribute('aria-busy');
@@ -1023,8 +1822,69 @@ document.addEventListener('click', (event) => {
     return;
   }
 
+  const entity = event.target.closest('[data-entity]');
+  if (entity) {
+    // 封面墙的格子带当天次数，先写到区块下方，关掉抽屉后仍看得到点的是哪一格。
+    if (entity.dataset.detail) setDetail(entity.dataset.detailTarget, entity.dataset.detail, entity);
+    openDetail(entity.dataset.entity, entity.dataset.entityId);
+    return;
+  }
+
+  const calendarMetric = event.target.closest('[data-cal-metric]');
+  if (calendarMetric) {
+    state.calendarMetric = calendarMetric.dataset.calMetric;
+    // 指标只换点的大小与文案，不重新请求。
+    if (lastCalendar) renderCalendar(lastCalendar);
+    return;
+  }
+
+  const calendarYear = event.target.closest('[data-cal-year]');
+  if (calendarYear && !calendarYear.disabled) {
+    state.calendarYear += Number(calendarYear.dataset.calYear);
+    state.calendarDay = null;
+    loadCalendar();
+    return;
+  }
+
+  const calendarDay = event.target.closest('button.cal-cell');
+  if (calendarDay) {
+    selectCalendarDay(calendarDay.dataset.date);
+    return;
+  }
+
   const detail = event.target.closest('[data-detail]');
   if (detail) setDetail(detail.dataset.detailTarget, detail.dataset.detail, detail);
+});
+
+// 日历方向键：左右一周、上下一天（与格子排列一致），只移动焦点；回车或空格再选中。
+nodes.calHeatmap.addEventListener('keydown', (event) => {
+  const cell = event.target.closest('button.cal-cell');
+  const step = { ArrowLeft: -7, ArrowRight: 7, ArrowUp: -1, ArrowDown: 1 }[event.key];
+  if (!cell || !step) return;
+  const next = nodes.calHeatmap.querySelector(`button.cal-cell[data-date="${isoAddDays(cell.dataset.date, step)}"]`);
+  if (!next) return;
+  event.preventDefault();
+  cell.tabIndex = -1;
+  next.tabIndex = 0;
+  next.focus();
+});
+
+nodes.drawerClose.addEventListener('click', () => nodes.drawer.close());
+nodes.drawerBack.addEventListener('click', () => {
+  const previous = detailHistory.pop();
+  if (previous) openDetail(previous.dimension, previous.id, { remember: false });
+});
+nodes.drawer.addEventListener('close', () => {
+  detailHistory.length = 0;
+  currentDetail = null;
+});
+// 点遮罩关闭：只认落在抽屉矩形之外的点击，内容较短时点到抽屉空白处不算。
+nodes.drawer.addEventListener('click', (event) => {
+  if (event.target !== nodes.drawer) return;
+  const rect = nodes.drawer.getBoundingClientRect();
+  const inside = event.clientX >= rect.left && event.clientX <= rect.right
+    && event.clientY >= rect.top && event.clientY <= rect.bottom;
+  if (!inside) nodes.drawer.close();
 });
 
 compactChart.addEventListener('change', () => {
@@ -1034,7 +1894,7 @@ compactChart.addEventListener('change', () => {
 nodes.refreshButton.addEventListener('click', loadDashboard);
 
 // 顶栏高亮当前所在区块；排行与最近播放归入「今天」。键的顺序即页面顺序。
-const NAV_SECTIONS = { overview: 'overview', ranking: 'overview', live: 'overview', trend: 'trend', covers: 'covers', playlists: 'playlists' };
+const NAV_SECTIONS = { overview: 'overview', ranking: 'overview', live: 'overview', trend: 'trend', calendar: 'calendar', covers: 'covers', playlists: 'playlists' };
 const navLinks = [...document.querySelectorAll('.nav-links a')];
 const sectionsInView = new Set();
 

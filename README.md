@@ -20,7 +20,7 @@
 - **快照差分**：计算同一首歌相邻可见快照的累计差值；首次出现的歌曲不计算差分，跨多日增量标记日期归属不确定。
 - **双数据源合并**：最近播放事件计数与 allData 差分按每首歌、每天取较大值。
 - **滚动窗口统计**：歌曲 / 歌手 / 专辑三个维度；日 / 周 / 月 / 年对应滚动 1 / 7 / 30 / 365 天，另支持全部已记录历史。
-- **Web 前端**：单页展示概览、排行、最近播放、播放趋势、24 小时活跃度、七日歌曲封面和歌单；原生 ESM，无框架、无构建步骤。日历热力与周几分布目前只通过 API 提供。
+- **Web 前端**：单页展示概览、排行、最近播放、播放趋势、24 小时活跃度、听歌日历、七日歌曲封面和歌单；点击歌曲、歌手或专辑打开详情抽屉。原生 ESM，无框架、无构建步骤。周几分布目前只通过 API 提供。
 - **进程内定时采集**：最近播放默认每 60 秒轮询，每日快照默认 04:00 采集，无需 cron。
 - **数据质量标注**：概览、排行等统计提供下界状态，前端以 `≥ X` 标注；趋势区分数据未知与已确认的零播放。
 - **歌单与封面**：同步用户歌单及曲目到本地数据库，网易云封面支持磁盘缓存。
@@ -158,6 +158,7 @@ npm run api
 | `GET /api/trend` | 趋势时序（可按歌曲 / 歌手 / 专辑过滤） |
 | `GET /api/hourly-activity` | 默认最近 30 个完整自然日的小时事件分布，始终排除今天 |
 | `GET /api/daily-top-songs` | 默认最近 7 天、包含结束日期当天的每日歌曲排行与封面 |
+| `GET /api/detail/:dimension/:id` | 详情抽屉：`dimension` 为 `song / artist / album`，返回统计窗口（`period`，默认 `month`）与全部记录的次数、名次、近 30 天小时分布；歌曲另含最近几次播放与所在歌单，歌手 / 专辑另含最常听的歌 |
 | `GET /api/calendar` | GitHub 贡献图式的日历热力 |
 | `GET /api/weekday` | 周几听歌分布，排除日期归属不确定的增量 |
 | `GET /api/playlists` · `GET /api/playlists/:id/tracks` | 本地保存的用户歌单与歌单曲目，支持分页 |
@@ -199,6 +200,7 @@ curl 'http://127.0.0.1:3000/api/playlists?limit=30&offset=0'
 | `trend` | `meta.range`、`meta.data_quality`、`meta.freshness`，并在每个时间桶标注质量状态 |
 | `daily-top-songs` | `meta.range`、`meta.data_quality`、`meta.freshness`，并提供逐日下界状态 |
 | `hourly-activity` | `meta.range`、`meta.timezone`、`meta.data_quality`、`meta.lower_bound` 及事件覆盖信息 |
+| `detail` | `meta.period_resolved`、`meta.data_quality`（统计窗口）、`meta.all_data_quality`（全部记录）、`meta.data_first_date`；小时分布带 `located_plays / unlocated_plays` |
 | `calendar` | `meta.year`、`meta.metric`、`meta.max`，逐日提供 `estimated / missing`；没有 `data_quality` 字段 |
 | `weekday` | `meta.range`、`meta.excluded_estimated_plays`；没有 `data_quality` 字段 |
 
@@ -207,6 +209,8 @@ curl 'http://127.0.0.1:3000/api/playlists?limit=30&offset=0'
 趋势的每个时间桶还提供 `lower_bound`、`has_gap`、`estimated`、`missing` 和 `is_current`。有记录但覆盖不完整的桶保留计数并标为下界；未知的空桶标记 `missing=true`。前端以 `≥` 表示下界，未知数据处中断连线，虚线仅表示进行中的时间桶。
 
 `hourly-activity` 固定返回 `hour=0–23` 共 24 个桶，只统计可定位到小时的真实事件。`meta.located_plays` 为可定位事件数，`meta.ledger_plays` 为日级总次数，`meta.unlocated_plays` 为按日比较后无法定位到小时的次数；无法定位的次数不会分摊到小时桶。`days` 支持 1–365，亦可使用 `from / to`；结束日期最晚为昨天。
+
+听歌日历直接读取 `trend?granularity=day&from=YYYY-01-01` 的逐日序列：第一个有记录的日子之前视为还没开始记录，之后 `missing=true` 的日子画成虚线圈（数据未知），`estimated=true` 画成空心点（日期不确定）。详情抽屉的逐日柱同样来自 `trend` 的 `song_id / artist_id / album_id` 过滤。
 
 ### 歌单同步与封面缓存
 
