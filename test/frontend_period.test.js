@@ -436,6 +436,10 @@ test('柱子错开长出；区块未进场时先停住，减少动效时连延�
   assert.match(source, /style: `--at: \$\{\(index \/ series\.length\)\.toFixed\(3\)\}`/);
   assert.match(source, /style: `--at: \$\{\(bucket\.hour \/ 24\)\.toFixed\(3\)\}`/);
   assert.match(css, /\.dc-bar,\s*\.dh-bar \{[^}]*transform-box: fill-box;[^}]*animation: bar-grow/);
+  // 只挂上动画不够：关键帧得从 0 高度起步，柱子才真的是长出来的（终点省略，即回到柱子本身的高度）。
+  assert.match(css, /@keyframes bar-grow \{\s*from \{ transform: scaleY\(0\); \}\s*\}/);
+  assert.match(css, /\.hour-cell__bar \{[^}]*transform-origin: bottom;/);
+  assert.match(css, /\.dc-bar,\s*\.dh-bar \{[^}]*transform-origin: bottom;/);
 
   const pause = css.slice(css.indexOf('@media (prefers-reduced-motion: no-preference)'));
   assert.match(pause, /^@media \(prefers-reduced-motion: no-preference\) \{\s*\.reveal:not\(\.is-revealed\) :is\(\.trend-plot, \.trend-areas, \.hour-cell__bar\) \{\s*animation-play-state: paused;/);
@@ -446,7 +450,8 @@ test('柱子错开长出；区块未进场时先停住，减少动效时连延�
 test('抽屉里前进从右边推入、返回从左边推回，内容到了再淡入', () => {
   const start = source.indexOf('async function openDetail');
   const opener = source.slice(start, source.indexOf('\n}\n', start));
-  assert.match(opener, /if \(navigating\) \{\s*playMotion\(nodes\.drawerBody, \[\s*\{ opacity: 0, transform: `translateX\(\$\{remember \? 32 : -32\}px\)` \}/);
+  // 起点按方向偏开，终点必须回到原位、完全不透明，内容才算推到位。
+  assert.match(opener, /if \(navigating\) \{\s*playMotion\(nodes\.drawerBody, \[\s*\{ opacity: 0, transform: `translateX\(\$\{remember \? 32 : -32\}px\)` \},\s*\{ opacity: 1, transform: 'none' \},\s*\]/);
   assert.match(opener, /for \(const section of nodes\.drawerBody\.children\) playMotion\(section/);
   assert.match(source, /openDetail\(previous\.dimension, previous\.id, \{ remember: false \}\)/);
   assert.match(css, /\.drawer \{[^}]*overflow-x: hidden;/);
