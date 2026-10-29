@@ -268,6 +268,68 @@ test('深色模式跟随系统也可手动指定，主题在样式生效前写�
   assert.doesNotMatch(css, /rgba\(249, 248, 245/);
 });
 
+test('浏览器栏颜色首屏就对：两档 theme-color 跟随系统，与 --n-1 一致；手动主题在页头脚本里先改', () => {
+  const lightPage = css.match(/:root \{[\s\S]*?--n-1: (#[0-9a-f]{6});/)[1];
+  const darkPage = css.match(/:root\[data-theme="dark"\] \{[\s\S]*?--n-1: (#[0-9a-f]{6});/)[1];
+  assert.match(html, new RegExp(`<meta name="theme-color" content="${lightPage}" media="\\(prefers-color-scheme: light\\)">`));
+  assert.match(html, new RegExp(`<meta name="theme-color" content="${darkPage}" media="\\(prefers-color-scheme: dark\\)">`));
+  const inline = html.slice(html.indexOf("localStorage.getItem('music-record-theme')"), html.indexOf('</script>'));
+  assert.match(inline, new RegExp(`theme === 'dark' \\? '${darkPage}' : '${lightPage}'`));
+  assert.match(source, /nodes\.themeColors\.forEach/);
+});
+
+test('别的标签页改了主题，本页通过 storage 事件立即同步', () => {
+  const start = source.indexOf("window.addEventListener('storage'");
+  assert.ok(start > 0);
+  const handler = source.slice(start, source.indexOf('\n});', start));
+  assert.match(handler, /event\.key !== THEME_KEY && event\.key !== null/);
+  assert.match(handler, /storedTheme\(\)/);
+  assert.match(handler, /syncThemeControls\(\)/);
+});
+
+test('过渡回调抛错：原始错误打到控制台，标记照常撤掉，不留未处理的 Promise 拒绝', async () => {
+  const start = source.indexOf('function withViewTransition');
+  const helper = source.slice(start, source.indexOf('\n}\n', start) + 2);
+  const unhandled = [];
+  const onUnhandled = (reason) => unhandled.push(reason);
+  process.on('unhandledRejection', onUnhandled);
+  try {
+    const root = { dataset: {} };
+    const errors = [];
+    const failure = new Error('render boom');
+    // 假的 View Transition：回调在微任务里跑，ready / updateCallbackDone / finished 都随回调失败而 reject。
+    const document = {
+      documentElement: root,
+      hidden: false,
+      startViewTransition(update) {
+        const done = Promise.resolve().then(update);
+        return { ready: done, updateCallbackDone: done, finished: done };
+      },
+    };
+    const withViewTransition = vm.runInNewContext(`let viewTransitionToken = 0; ${helper}; withViewTransition`, {
+      document,
+      reducedMotion: { matches: false },
+      console: { error: (error) => errors.push(error) },
+    });
+    withViewTransition(() => {
+      throw failure;
+    }, 'theme');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    assert.deepEqual(errors, [failure]);
+    assert.equal(root.dataset.vt, undefined);
+    assert.deepEqual(unhandled, []);
+  } finally {
+    process.off('unhandledRejection', onUnhandled);
+  }
+});
+
+test('日历在过渡回调里再核对请求号，较早的年份不会覆盖较新的请求', () => {
+  const start = source.indexOf('async function loadCalendar');
+  const loader = source.slice(start, source.indexOf('\n}\n', start));
+  const update = loader.slice(loader.indexOf('const update = () => {'));
+  assert.match(update, /^const update = \(\) => \{\s*if \(requestId !== calendarRequestId\) return;/);
+});
+
 test('切换动画：排行行带稳定的 view-transition-name，减少动效或不支持时直接替换', () => {
   const start = source.indexOf('function withViewTransition');
   const helper = source.slice(start, source.indexOf('\n}\n', start));
@@ -282,7 +344,11 @@ test('换主题从右下往左上斜向擦过：先拉开一段、停顿、再�
   assert.match(keyframes, /0% \{\s*clip-path: polygon\(100% 100%, 100% 100%, 100% 100%\)/);
   assert.match(keyframes, /30%,\s*46% \{\s*clip-path: polygon\(100% 100%, 100% 72%, 72% 100%\)/);
   assert.match(keyframes, /100% \{\s*clip-path: polygon\(100% 100%, 100% -110%, -110% 100%\)/);
-  assert.match(css, /:root\[data-vt="theme"\]::view-transition-new\(root\) \{\s*animation: theme-reveal/);
+  // 时长也要锁住：改成 0s 时关键帧还在，但擦除会瞬间完成。
+  const applied = css.match(/:root\[data-vt="theme"\]::view-transition-new\(root\) \{\s*animation: theme-reveal (\d*\.?\d+)(m?s) both;/);
+  assert.ok(applied, '主题动画应写成 animation: theme-reveal <时长> both');
+  const seconds = Number(applied[1]) / (applied[2] === 'ms' ? 1000 : 1);
+  assert.equal(seconds, 1.15);
   assert.match(css, /:root\[data-vt="theme"\] \.rank-row,[\s\S]*?view-transition-name: none !important/);
   assert.match(source, /\}, 'theme'\);/);
 });
@@ -303,6 +369,36 @@ test('封面取色只用于详情抽屉，灰色像素不参与', () => {
   assert.ok(Math.abs(rgbToHsl(0, 0, 255)[0] - 2 / 3) < 1e-9);
   assert.match(css, /\.drawer\.has-tone \{/);
   assert.equal((css.match(/has-tone/g) || []).length, 1);
+});
+
+test('sampleCoverTone：灰色封面不取色，彩色封面取到对应色相', () => {
+  // Node 里没有 canvas：用假的 2D 上下文按给定像素填满 getImageData，其余按真实逻辑跑。
+  const start = source.indexOf('const coverToneCache');
+  const end = source.indexOf('function applyDetailTone', start);
+  const sampler = (pixels) => {
+    const document = {
+      createElement: () => ({
+        getContext: () => ({
+          clearRect() {},
+          drawImage() {},
+          getImageData: (_x, _y, width, height) => ({
+            data: Uint8ClampedArray.from({ length: width * height * 4 }, (_, index) => pixels(Math.floor(index / 4))[index % 4]),
+          }),
+        }),
+      }),
+    };
+    return vm.runInNewContext(`${source.slice(start, end)}; sampleCoverTone`, { document });
+  };
+
+  // 中灰底 + 深灰方块：饱和度为零，不应取色。
+  const grey = sampler((pixel) => (pixel % 24 > 6 && pixel % 24 < 18 ? [40, 40, 40, 255] : [128, 128, 128, 255]));
+  assert.equal(grey({ src: 'grey.png' }), null);
+
+  // 米白底上一大块蓝：取到蓝色附近的色相，饱和度落在 28–60 之间。
+  const blue = sampler((pixel) => (pixel % 24 > 3 && pixel % 24 < 20 ? [47, 93, 138, 255] : [244, 241, 234, 255]));
+  const tone = blue({ src: 'blue.png' });
+  assert.ok(tone && Math.abs(tone.hue - 210) <= 3, `蓝色封面色相应在 210° 附近，实际 ${tone?.hue}`);
+  assert.ok(tone.saturation >= 28 && tone.saturation <= 60);
 });
 
 test('最近播放显示封面，歌单索引与曲目左右排列', () => {

@@ -84,7 +84,7 @@ const nodes = {
   drawerBack: document.querySelector('#drawerBack'),
   drawerClose: document.querySelector('#drawerClose'),
   themeToggle: document.querySelector('#themeToggle'),
-  themeColor: document.querySelector('meta[name="theme-color"]'),
+  themeColors: document.querySelectorAll('meta[name="theme-color"]'),
   footerTimezone: document.querySelector('#footerTimezone'),
 };
 
@@ -218,10 +218,14 @@ function withViewTransition(update, kind = 'swap') {
   const transition = document.startViewTransition(update);
   // 连点或翻页会打断过渡，ready 随之 reject；内容已照常更新，这里只是不让它变成未处理的错误。
   transition.ready.catch(() => {});
+  // 更新回调本身抛错时 ready / finished 都会 reject：把原始错误打到控制台（和不用过渡时一样看得见），其余吞掉。
+  transition.updateCallbackDone.catch((error) => console.error(error));
   // 新的过渡会打断旧的；只有最后一次过渡结束时才撤掉标记。
-  transition.finished.finally(() => {
-    if (token === viewTransitionToken) delete root.dataset.vt;
-  });
+  transition.finished
+    .catch(() => {})
+    .finally(() => {
+      if (token === viewTransitionToken) delete root.dataset.vt;
+    });
 }
 
 function setMetricValue(node, text) {
@@ -1290,7 +1294,9 @@ async function loadCalendar({ animate = false } = {}) {
   if (!thisYear) params.to = `${state.calendarYear}-12-31`;
   const payload = await getJson('/api/trend', params).catch((error) => ({ error: error.message }));
   if (requestId !== calendarRequestId) return;
+  // View Transition 的回调要等下一帧才跑，这期间可能又翻了年份；到时再核一次，旧年份不覆盖新请求。
   const update = () => {
+    if (requestId !== calendarRequestId) return;
     renderCalendar(payload);
     nodes.calHeatmap.removeAttribute('aria-busy');
   };
@@ -1849,7 +1855,8 @@ async function loadWindowData() {
   ]);
   withViewTransition(() => {
     if (currentOverviewRequest === overviewRequestId) renderOverview(overview, latestHealth);
-    if (currentRankingRequest === rankingRequestId) renderRanking(ranking, latestHealth);
+    if (currentRankingRequest !== rankingRequestId) return;
+    renderRanking(ranking, latestHealth);
     nodes.rankingList.removeAttribute('aria-busy');
   });
 }
@@ -1866,7 +1873,8 @@ async function loadRanking() {
     limit: 10,
   }).catch((error) => ({ error: error.message }));
   withViewTransition(() => {
-    if (requestId === rankingRequestId) renderRanking(ranking, latestHealth);
+    if (requestId !== rankingRequestId) return;
+    renderRanking(ranking, latestHealth);
     nodes.rankingList.removeAttribute('aria-busy');
   });
 }
@@ -1881,7 +1889,8 @@ async function loadTrend() {
     last: state.granularity === 'day' ? 30 : 12,
   }).catch((error) => ({ error: error.message }));
   withViewTransition(() => {
-    if (requestId === trendRequestId) renderTrend(trend, latestHealth);
+    if (requestId !== trendRequestId) return;
+    renderTrend(trend, latestHealth);
     nodes.trendChart.removeAttribute('aria-busy');
   });
 }
@@ -2108,6 +2117,15 @@ document.querySelectorAll('.page-shell > .block, .split > .block').forEach((bloc
 });
 
 // 主题：默认跟随系统；手动切到与系统相同的一侧时清掉记录，之后继续跟随系统。
+function storedTheme() {
+  try {
+    const theme = localStorage.getItem(THEME_KEY);
+    return theme === 'dark' || theme === 'light' ? theme : null;
+  } catch {
+    return null;
+  }
+}
+
 function currentTheme() {
   return document.documentElement.dataset.theme || (darkScheme.matches ? 'dark' : 'light');
 }
@@ -2118,7 +2136,8 @@ function syncThemeControls() {
   nodes.themeToggle.setAttribute('aria-label', label);
   nodes.themeToggle.title = label;
   nodes.themeToggle.querySelector('use').setAttribute('href', dark ? '#icon-sun' : '#icon-moon');
-  nodes.themeColor.content = getComputedStyle(document.documentElement).getPropertyValue('--n-1').trim();
+  const pageColor = getComputedStyle(document.documentElement).getPropertyValue('--n-1').trim();
+  nodes.themeColors.forEach((meta) => { meta.content = pageColor; });
 }
 
 nodes.themeToggle.addEventListener('click', () => {
@@ -2137,6 +2156,15 @@ nodes.themeToggle.addEventListener('click', () => {
   }
 });
 darkScheme.addEventListener('change', syncThemeControls);
+// 别的标签页改了主题：这里立刻跟上，下次切换才不会拿过时的状态去算、覆盖掉新的偏好。
+// key 为 null 表示整个存储被清空，也按「跟随系统」处理。
+window.addEventListener('storage', (event) => {
+  if (event.key !== THEME_KEY && event.key !== null) return;
+  const theme = storedTheme();
+  if (theme) document.documentElement.dataset.theme = theme;
+  else delete document.documentElement.dataset.theme;
+  syncThemeControls();
+});
 syncThemeControls();
 
 // 字体加载、窗口变宽变窄都会改变按钮尺寸，滑块跟着重新定位。

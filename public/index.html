@@ -3,14 +3,16 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="theme-color" content="#f9f8f5">
+    <!-- 浏览器栏颜色：两档与 styles.css 里浅色/深色的 --n-1 一致，跟随系统时不等脚本就是对的。 -->
+    <meta name="theme-color" content="#f9f8f5" media="(prefers-color-scheme: light)">
+    <meta name="theme-color" content="#151412" media="(prefers-color-scheme: dark)">
     <meta name="description" content="音乐记录：按本地时间观察播放、排行、趋势与歌单。">
     <title>音乐记录</title>
     <link rel="icon" type="image/svg+xml" href="/favicon.svg">
     <link rel="icon" type="image/png" href="/favicon.png">
     <link rel="apple-touch-icon" href="/logo.png">
-    <!-- 手动选过的主题要在样式生效前写上，避免先闪一下浅色。 -->
-    <script>try { const theme = localStorage.getItem('music-record-theme'); if (theme === 'dark' || theme === 'light') document.documentElement.dataset.theme = theme; } catch {}</script>
+    <!-- 手动选过的主题要在样式生效前写上，避免先闪一下浅色；浏览器栏颜色一并改成所选主题。 -->
+    <script>try { const theme = localStorage.getItem('music-record-theme'); if (theme === 'dark' || theme === 'light') { document.documentElement.dataset.theme = theme; document.querySelectorAll('meta[name="theme-color"]').forEach((meta) => { meta.content = theme === 'dark' ? '#151412' : '#f9f8f5'; }); } } catch {}</script>
     <link rel="stylesheet" href="/styles.css">
     <script type="module" src="/app.js"></script>
   </head>
