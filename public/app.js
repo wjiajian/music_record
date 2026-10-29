@@ -17,6 +17,7 @@ let trendRequestId = 0;
 let calendarRequestId = 0;
 let calendarDayRequestId = 0;
 let detailRequestId = 0;
+let viewTransitionToken = 0;
 let lastTrend = null;
 let lastCalendar = null;
 let calendarDayMap = new Map();
@@ -38,6 +39,8 @@ const numberFormat = new Intl.NumberFormat('zh-CN');
 const percentFormat = new Intl.NumberFormat('zh-CN', { style: 'percent', maximumFractionDigits: 1 });
 const reducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)');
 const compactChart = window.matchMedia('(max-width: 640px)');
+const darkScheme = window.matchMedia('(prefers-color-scheme: dark)');
+const THEME_KEY = 'music-record-theme';
 
 const WEEKDAYS = ['周日', '周一', '周二', '周三', '周四', '周五', '周六'];
 const CN_DIGITS = ['零', '一', '二', '三', '四', '五', '六', '七', '八', '九', '十'];
@@ -80,6 +83,8 @@ const nodes = {
   drawerExternal: document.querySelector('#drawerExternal'),
   drawerBack: document.querySelector('#drawerBack'),
   drawerClose: document.querySelector('#drawerClose'),
+  themeToggle: document.querySelector('#themeToggle'),
+  themeColors: document.querySelectorAll('meta[name="theme-color"]'),
   footerTimezone: document.querySelector('#footerTimezone'),
 };
 
@@ -172,6 +177,55 @@ function setActiveButtons() {
       button.setAttribute('aria-pressed', String(selected));
     });
   }
+  syncSwitchIndicators();
+}
+
+// 切换动画：分段按钮与标签页的选中块滑到新位置。滑块由脚本插入，没有脚本时仍是原来的选中底色/下划线。
+function syncSwitchIndicator(group) {
+  let indicator = group.querySelector(':scope > .switch-indicator');
+  if (!indicator) {
+    indicator = document.createElement('span');
+    indicator.className = 'switch-indicator';
+    indicator.setAttribute('aria-hidden', 'true');
+    group.prepend(indicator);
+    group.classList.add('has-indicator');
+  }
+  const active = group.querySelector(':scope > .is-active');
+  indicator.hidden = !active;
+  if (!active) return;
+  indicator.style.setProperty('--x', `${active.offsetLeft}px`);
+  indicator.style.setProperty('--y', `${active.offsetTop}px`);
+  indicator.style.setProperty('--w', `${active.offsetWidth}px`);
+  indicator.style.setProperty('--h', `${active.offsetHeight}px`);
+  // 第一次定位不滑，之后才打开过渡。
+  if (!indicator.classList.contains('is-ready')) requestAnimationFrame(() => indicator.classList.add('is-ready'));
+}
+
+function syncSwitchIndicators() {
+  document.querySelectorAll('.segmented, .tabs').forEach(syncSwitchIndicator);
+}
+
+// 用 View Transitions 把一次 DOM 替换变成动画：swap 只动被命名的区块（排行行、趋势图、日历），theme 整页从右下往左上擦过。
+// 不支持、减少动效或页面在后台时直接替换。
+function withViewTransition(update, kind = 'swap') {
+  if (!document.startViewTransition || reducedMotion.matches || document.hidden) {
+    update();
+    return;
+  }
+  const root = document.documentElement;
+  const token = ++viewTransitionToken;
+  root.dataset.vt = kind;
+  const transition = document.startViewTransition(update);
+  // 连点或翻页会打断过渡，ready 随之 reject；内容已照常更新，这里只是不让它变成未处理的错误。
+  transition.ready.catch(() => {});
+  // 更新回调本身抛错时 ready / finished 都会 reject：把原始错误打到控制台（和不用过渡时一样看得见），其余吞掉。
+  transition.updateCallbackDone.catch((error) => console.error(error));
+  // 新的过渡会打断旧的；只有最后一次过渡结束时才撤掉标记。
+  transition.finished
+    .catch(() => {})
+    .finally(() => {
+      if (token === viewTransitionToken) delete root.dataset.vt;
+    });
 }
 
 function setMetricValue(node, text) {
@@ -361,6 +415,14 @@ function renderMosaic(payload = null) {
     };
   });
 
+  // 同一首歌这周出现在几天：悬停时联动高亮，标签里也说出来。
+  const daysBySong = new Map();
+  for (const item of items) {
+    for (const id of new Set((item.songs || []).map((entry) => entry.song?.id).filter(Boolean))) {
+      daysBySong.set(id, (daysBySong.get(id) || 0) + 1);
+    }
+  }
+
   const rows = groupMosaicDays(items).map((item) => {
     const row = document.createElement('li');
     row.className = 'mosaic-row';
@@ -398,7 +460,8 @@ function renderMosaic(payload = null) {
       const button = document.createElement('button');
       button.className = 'mosaic-cover';
       button.type = 'button';
-      const label = `${item.date}，${entry.song?.name || '未命名歌曲'}，${songSubtitle(entry.song)}，${formatNumber(entry.plays)} 次播放`;
+      const songDays = daysBySong.get(entry.song?.id) || 0;
+      const label = `${item.date}，${entry.song?.name || '未命名歌曲'}，${songSubtitle(entry.song)}，${formatNumber(entry.plays)} 次播放${songDays > 1 ? `，这周有 ${songDays} 天都听了` : ''}`;
       button.setAttribute('aria-label', label);
       button.title = label;
       button.dataset.detail = label;
@@ -406,6 +469,7 @@ function renderMosaic(payload = null) {
       if (entry.song?.id) {
         button.dataset.entity = 'song';
         button.dataset.entityId = String(entry.song.id);
+        button.dataset.songId = String(entry.song.id);
       }
       button.append(createCoverMedia(entry.song?.album?.picUrl || entry.song?.picUrl, ''));
       return button;
@@ -414,6 +478,7 @@ function renderMosaic(payload = null) {
     return row;
   });
   nodes.mosaic.replaceChildren(...rows);
+  linkMosaicSong(null);
   setDetail('mosaicDetail', '');
 
   if (payload?.error) {
@@ -424,6 +489,17 @@ function renderMosaic(payload = null) {
     nodes.mosaicSummary.textContent = '';
   }
   nodes.mosaicSummary.hidden = !nodes.mosaicSummary.textContent;
+}
+
+// 封面墙同曲联动：指到（或键盘聚焦）一格时，这周其他天的同一首歌一起亮起，其余格子变淡。
+function linkMosaicSong(songId) {
+  const linked = songId || '';
+  if ((nodes.mosaic.dataset.linkedSong || '') === linked) return;
+  if (linked) nodes.mosaic.dataset.linkedSong = linked;
+  else delete nodes.mosaic.dataset.linkedSong;
+  nodes.mosaic.querySelectorAll('.mosaic-cover').forEach((cover) => {
+    cover.classList.toggle('is-linked', Boolean(linked) && cover.dataset.songId === linked);
+  });
 }
 
 function renderHealth(health) {
@@ -488,6 +564,8 @@ function renderRanking(payload, health) {
   const rows = items.map((item) => {
     const row = document.createElement('li');
     row.className = 'rank-row';
+    // 同一首歌/歌手/专辑在切换窗口前后同名，View Transition 才能让它滑到新名次。
+    row.style.viewTransitionName = `rank-${state.dimension}-${item.id}`;
 
     const index = document.createElement('span');
     index.className = 'rank-index';
@@ -1148,6 +1226,7 @@ function syncCalendarControls() {
     tab.classList.toggle('is-active', active);
     tab.setAttribute('aria-pressed', String(active));
   });
+  syncSwitchIndicators();
 }
 
 // 日历只占一个 Tab 位：选中的那天（没有就第一天）可聚焦，其余用方向键到达。
@@ -1203,7 +1282,8 @@ function renderCalendar(payload) {
   selectCalendarDay(state.calendarDay);
 }
 
-async function loadCalendar() {
+// animate：翻年份时用 View Transition 淡入淡出；首屏加载直接替换骨架。
+async function loadCalendar({ animate = false } = {}) {
   const requestId = ++calendarRequestId;
   // 每日快照会补进昨天的差分，刷新时不能沿用旧的当天歌曲。
   calendarTopSongs.clear();
@@ -1214,8 +1294,14 @@ async function loadCalendar() {
   if (!thisYear) params.to = `${state.calendarYear}-12-31`;
   const payload = await getJson('/api/trend', params).catch((error) => ({ error: error.message }));
   if (requestId !== calendarRequestId) return;
-  renderCalendar(payload);
-  nodes.calHeatmap.removeAttribute('aria-busy');
+  // View Transition 的回调要等下一帧才跑，这期间可能又翻了年份；到时再核一次，旧年份不覆盖新请求。
+  const update = () => {
+    if (requestId !== calendarRequestId) return;
+    renderCalendar(payload);
+    nodes.calHeatmap.removeAttribute('aria-busy');
+  };
+  if (animate) withViewTransition(update);
+  else update();
 }
 
 function renderCalendarDetail(day, tops) {
@@ -1531,6 +1617,7 @@ function renderDetail(detail, trend, windowKey) {
     );
     failure.querySelector('strong').id = 'drawerTitle';
     nodes.drawerBody.replaceChildren(failure);
+    applyDetailTone(null);
     return;
   }
   const { entity, meta, window: windowTotals, all } = detail;
@@ -1544,6 +1631,7 @@ function renderDetail(detail, trend, windowKey) {
   cover.className = 'drawer__cover';
   const pic = dimension === 'song' ? entity.album?.picUrl : entity.picUrl;
   cover.append(pic ? createCoverMedia(pic, '') : icon(dimension === 'artist' ? 'mic2' : 'music'));
+  toneFromCover(cover, currentDetail);
   const titleBlock = document.createElement('div');
   titleBlock.className = 'drawer__title';
   const title = document.createElement('h2');
@@ -1633,6 +1721,84 @@ function renderDetail(detail, trend, windowKey) {
   nodes.drawerBody.replaceChildren(...sections);
 }
 
+// 封面取色：只取一个色相给抽屉用（底色淡淡染一层、强调色换成同色相）。
+// 图片走本站 /api/cover，同源才能读像素；灰白或读不到的封面不取色，保持默认配色。
+const coverToneCache = new Map();
+let toneCanvas = null;
+
+function rgbToHsl(red, green, blue) {
+  const r = red / 255;
+  const g = green / 255;
+  const b = blue / 255;
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const lightness = (max + min) / 2;
+  if (max === min) return [0, 0, lightness];
+  const delta = max - min;
+  const saturation = lightness > 0.5 ? delta / (2 - max - min) : delta / (max + min);
+  const hue = max === r ? (g - b) / delta + (g < b ? 6 : 0) : max === g ? (b - r) / delta + 2 : (r - g) / delta + 4;
+  return [hue / 6, saturation, lightness];
+}
+
+function sampleCoverTone(image) {
+  const key = image.currentSrc || image.src;
+  if (coverToneCache.has(key)) return coverToneCache.get(key);
+  const size = 24;
+  toneCanvas ||= Object.assign(document.createElement('canvas'), { width: size, height: size });
+  let tone = null;
+  try {
+    const context = toneCanvas.getContext('2d', { willReadFrequently: true });
+    context.clearRect(0, 0, size, size);
+    context.drawImage(image, 0, 0, size, size);
+    const { data } = context.getImageData(0, 0, size, size);
+    let x = 0;
+    let y = 0;
+    let weights = 0;
+    let saturationSum = 0;
+    for (let index = 0; index < data.length; index += 4) {
+      const [hue, saturation, lightness] = rgbToHsl(data[index], data[index + 1], data[index + 2]);
+      // 越鲜艳、越接近中间亮度的像素越算数，大片白底、黑底和灰色几乎不参与。
+      const weight = saturation * (1 - Math.abs(lightness - 0.5) * 2) * (data[index + 3] / 255);
+      if (weight <= 0) continue;
+      x += Math.cos(hue * 2 * Math.PI) * weight;
+      y += Math.sin(hue * 2 * Math.PI) * weight;
+      weights += weight;
+      saturationSum += saturation * weight;
+    }
+    if (weights / (size * size) > 0.06) {
+      tone = {
+        hue: Math.round(((Math.atan2(y, x) / (2 * Math.PI)) + 1) % 1 * 360),
+        saturation: Math.round(Math.min(60, Math.max(28, (saturationSum / weights) * 100))),
+      };
+    }
+  } catch {
+    tone = null;
+  }
+  coverToneCache.set(key, tone);
+  return tone;
+}
+
+function applyDetailTone(tone) {
+  nodes.drawer.classList.toggle('has-tone', Boolean(tone));
+  if (!tone) return;
+  nodes.drawer.style.setProperty('--tone-h', String(tone.hue));
+  nodes.drawer.style.setProperty('--tone-s', `${tone.saturation}%`);
+}
+
+// 封面加载完再取色；期间已经换到别的详情就不再套用。
+function toneFromCover(cover, detailKey) {
+  const image = cover.querySelector('img');
+  if (!image) {
+    applyDetailTone(null);
+    return;
+  }
+  const apply = () => {
+    if (currentDetail === detailKey) applyDetailTone(image.naturalWidth ? sampleCoverTone(image) : null);
+  };
+  if (image.complete) apply();
+  else image.addEventListener('load', apply, { once: true });
+}
+
 function renderDetailSkeleton() {
   const head = document.createElement('div');
   head.className = 'drawer__head';
@@ -1687,9 +1853,12 @@ async function loadWindowData() {
     getJson('/api/overview', { period: state.window }).catch((error) => ({ error: error.message })),
     getJson('/api/ranking', { dimension: state.dimension, metric: 'plays', period: state.window, limit: 10 }).catch((error) => ({ error: error.message })),
   ]);
-  if (currentOverviewRequest === overviewRequestId) renderOverview(overview, latestHealth);
-  if (currentRankingRequest === rankingRequestId) renderRanking(ranking, latestHealth);
-  nodes.rankingList.removeAttribute('aria-busy');
+  withViewTransition(() => {
+    if (currentOverviewRequest === overviewRequestId) renderOverview(overview, latestHealth);
+    if (currentRankingRequest !== rankingRequestId) return;
+    renderRanking(ranking, latestHealth);
+    nodes.rankingList.removeAttribute('aria-busy');
+  });
 }
 
 // 排行维度只改变当前统计窗口下的本地排行查询。
@@ -1703,8 +1872,11 @@ async function loadRanking() {
     period: state.window,
     limit: 10,
   }).catch((error) => ({ error: error.message }));
-  if (requestId === rankingRequestId) renderRanking(ranking, latestHealth);
-  nodes.rankingList.removeAttribute('aria-busy');
+  withViewTransition(() => {
+    if (requestId !== rankingRequestId) return;
+    renderRanking(ranking, latestHealth);
+    nodes.rankingList.removeAttribute('aria-busy');
+  });
 }
 
 // 趋势查询固定的 30 日 / 12 周 / 12 月序列，只影响趋势图本身。
@@ -1716,8 +1888,11 @@ async function loadTrend() {
     granularity: state.granularity,
     last: state.granularity === 'day' ? 30 : 12,
   }).catch((error) => ({ error: error.message }));
-  if (requestId === trendRequestId) renderTrend(trend, latestHealth);
-  nodes.trendChart.removeAttribute('aria-busy');
+  withViewTransition(() => {
+    if (requestId !== trendRequestId) return;
+    renderTrend(trend, latestHealth);
+    nodes.trendChart.removeAttribute('aria-busy');
+  });
 }
 
 async function loadDashboard() {
@@ -1833,8 +2008,8 @@ document.addEventListener('click', (event) => {
   const calendarMetric = event.target.closest('[data-cal-metric]');
   if (calendarMetric) {
     state.calendarMetric = calendarMetric.dataset.calMetric;
-    // 指标只换点的大小与文案，不重新请求。
-    if (lastCalendar) renderCalendar(lastCalendar);
+    // 指标只换格子深浅与文案，不重新请求。
+    if (lastCalendar) withViewTransition(() => renderCalendar(lastCalendar));
     return;
   }
 
@@ -1842,7 +2017,7 @@ document.addEventListener('click', (event) => {
   if (calendarYear && !calendarYear.disabled) {
     state.calendarYear += Number(calendarYear.dataset.calYear);
     state.calendarDay = null;
-    loadCalendar();
+    loadCalendar({ animate: true });
     return;
   }
 
@@ -1869,6 +2044,17 @@ nodes.calHeatmap.addEventListener('keydown', (event) => {
   next.focus();
 });
 
+nodes.mosaic.addEventListener('pointerover', (event) => {
+  linkMosaicSong(event.target.closest('.mosaic-cover')?.dataset.songId);
+});
+nodes.mosaic.addEventListener('pointerleave', () => linkMosaicSong(null));
+nodes.mosaic.addEventListener('focusin', (event) => {
+  linkMosaicSong(event.target.closest('.mosaic-cover')?.dataset.songId);
+});
+nodes.mosaic.addEventListener('focusout', (event) => {
+  if (!nodes.mosaic.contains(event.relatedTarget)) linkMosaicSong(null);
+});
+
 nodes.drawerClose.addEventListener('click', () => nodes.drawer.close());
 nodes.drawerBack.addEventListener('click', () => {
   const previous = detailHistory.pop();
@@ -1877,6 +2063,7 @@ nodes.drawerBack.addEventListener('click', () => {
 nodes.drawer.addEventListener('close', () => {
   detailHistory.length = 0;
   currentDetail = null;
+  applyDetailTone(null);
 });
 // 点遮罩关闭：只认落在抽屉矩形之外的点击，内容较短时点到抽屉空白处不算。
 nodes.drawer.addEventListener('click', (event) => {
@@ -1928,6 +2115,61 @@ document.querySelectorAll('.page-shell > .block, .split > .block').forEach((bloc
   block.classList.add('reveal');
   revealObserver.observe(block);
 });
+
+// 主题：默认跟随系统；手动切到与系统相同的一侧时清掉记录，之后继续跟随系统。
+function storedTheme() {
+  try {
+    const theme = localStorage.getItem(THEME_KEY);
+    return theme === 'dark' || theme === 'light' ? theme : null;
+  } catch {
+    return null;
+  }
+}
+
+function currentTheme() {
+  return document.documentElement.dataset.theme || (darkScheme.matches ? 'dark' : 'light');
+}
+
+function syncThemeControls() {
+  const dark = currentTheme() === 'dark';
+  const label = dark ? '切换到浅色' : '切换到深色';
+  nodes.themeToggle.setAttribute('aria-label', label);
+  nodes.themeToggle.title = label;
+  nodes.themeToggle.querySelector('use').setAttribute('href', dark ? '#icon-sun' : '#icon-moon');
+  const pageColor = getComputedStyle(document.documentElement).getPropertyValue('--n-1').trim();
+  nodes.themeColors.forEach((meta) => { meta.content = pageColor; });
+}
+
+nodes.themeToggle.addEventListener('click', () => {
+  const next = currentTheme() === 'dark' ? 'light' : 'dark';
+  const system = darkScheme.matches ? 'dark' : 'light';
+  withViewTransition(() => {
+    if (next === system) delete document.documentElement.dataset.theme;
+    else document.documentElement.dataset.theme = next;
+    syncThemeControls();
+  }, 'theme');
+  try {
+    if (next === system) localStorage.removeItem(THEME_KEY);
+    else localStorage.setItem(THEME_KEY, next);
+  } catch {
+    // 无痕模式等场景写不进去时只在本次打开里生效。
+  }
+});
+darkScheme.addEventListener('change', syncThemeControls);
+// 别的标签页改了主题：这里立刻跟上，下次切换才不会拿过时的状态去算、覆盖掉新的偏好。
+// key 为 null 表示整个存储被清空，也按「跟随系统」处理。
+window.addEventListener('storage', (event) => {
+  if (event.key !== THEME_KEY && event.key !== null) return;
+  const theme = storedTheme();
+  if (theme) document.documentElement.dataset.theme = theme;
+  else delete document.documentElement.dataset.theme;
+  syncThemeControls();
+});
+syncThemeControls();
+
+// 字体加载、窗口变宽变窄都会改变按钮尺寸，滑块跟着重新定位。
+const indicatorObserver = new ResizeObserver(() => syncSwitchIndicators());
+document.querySelectorAll('.segmented, .tabs').forEach((group) => indicatorObserver.observe(group));
 
 const now = new Date();
 nodes.heroDate.dateTime = now.toLocaleDateString('en-CA');
