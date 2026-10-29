@@ -408,3 +408,156 @@ test('最近播放显示封面，歌单索引与曲目左右排列', () => {
   assert.match(html, /class="playlist-layout"[\s\S]*class="playlist-index"[\s\S]*class="tracks"/);
   assert.match(css, /\.playlist-layout \{[^}]*grid-template-columns: minmax\(0, 2fr\) minmax\(0, 3fr\)/);
 });
+
+test('趋势换周期改为描线：不再走 View Transition 淡入淡出，宽度变化重画时不描', () => {
+  const loaderStart = source.indexOf('async function loadTrend()');
+  const loader = source.slice(loaderStart, source.indexOf('\n}\n', loaderStart));
+  assert.doesNotMatch(loader, /withViewTransition/);
+  assert.match(loader, /renderTrend\(trend, latestHealth, \{ animate: true \}\)/);
+  assert.match(source, /if \(lastTrend\) renderTrend\(lastTrend\.payload, lastTrend\.health\);/);
+
+  const start = source.indexOf('function renderTrend');
+  const renderer = source.slice(start, source.indexOf('function renderHourlyActivity', start));
+  assert.match(renderer, /class: 'trend-areas'/);
+  assert.match(renderer, /class: 'trend-plot'/);
+  assert.match(renderer, /areas\.append\(makeSvgElement\('path', \{ d: area, class: 'trend-area' \}\)\)/);
+  assert.match(renderer, /plot\.append\(circle\)/);
+  assert.match(renderer, /figure\.classList\.toggle\('is-drawing', animate\)/);
+
+  assert.match(css, /@keyframes trend-draw \{\s*from \{ clip-path: inset\(-8px calc\(100% \+ 8px\) -8px -8px\); \}/);
+  // backwards：播完撤掉裁剪，静止时折线描边不被切。
+  assert.match(css, /\.trend-figure\.is-drawing \.trend-plot \{\s*animation: trend-draw [^;]* backwards;/);
+  assert.doesNotMatch(css, /view-transition-name: trend-chart|:root\[data-vt="theme"\] \.trend-chart/);
+});
+
+test('柱子错开长出；区块未进场时先停住，减少动效时连延迟一起归零', () => {
+  assert.match(source, /cell\.style\.setProperty\('--i', String\(bucket\.hour\)\)/);
+  assert.match(css, /\.hour-cell__bar \{[^}]*animation: bar-grow [^;]*calc\(var\(--i, 0\) \* 16ms\) backwards;/);
+  assert.match(source, /style: `--at: \$\{\(index \/ series\.length\)\.toFixed\(3\)\}`/);
+  assert.match(source, /style: `--at: \$\{\(bucket\.hour \/ 24\)\.toFixed\(3\)\}`/);
+  assert.match(css, /\.dc-bar,\s*\.dh-bar \{[^}]*transform-box: fill-box;[^}]*animation: bar-grow/);
+  // 只挂上动画不够：关键帧得从 0 高度起步，柱子才真的是长出来的（终点省略，即回到柱子本身的高度）。
+  assert.match(css, /@keyframes bar-grow \{\s*from \{ transform: scaleY\(0\); \}\s*\}/);
+  assert.match(css, /\.hour-cell__bar \{[^}]*transform-origin: bottom;/);
+  assert.match(css, /\.dc-bar,\s*\.dh-bar \{[^}]*transform-origin: bottom;/);
+
+  const pause = css.slice(css.indexOf('@media (prefers-reduced-motion: no-preference)'));
+  assert.match(pause, /^@media \(prefers-reduced-motion: no-preference\) \{\s*\.reveal:not\(\.is-revealed\) :is\(\.trend-plot, \.trend-areas, \.hour-cell__bar\) \{\s*animation-play-state: paused;/);
+  const reduced = css.slice(css.indexOf('@media (prefers-reduced-motion: reduce)'));
+  assert.match(reduced, /animation-delay: 0ms !important;/);
+});
+
+test('抽屉里前进从右边推入、返回从左边推回，内容到了再淡入', () => {
+  const start = source.indexOf('async function openDetail');
+  const opener = source.slice(start, source.indexOf('\n}\n', start));
+  // 起点按方向偏开，终点必须回到原位、完全不透明，内容才算推到位。
+  assert.match(opener, /if \(navigating\) \{\s*playMotion\(nodes\.drawerBody, \[\s*\{ opacity: 0, transform: `translateX\(\$\{remember \? 32 : -32\}px\)` \},\s*\{ opacity: 1, transform: 'none' \},\s*\]/);
+  assert.match(opener, /for \(const section of nodes\.drawerBody\.children\) playMotion\(section/);
+  assert.match(source, /openDetail\(previous\.dimension, previous\.id, \{ remember: false \}\)/);
+  assert.match(css, /\.drawer \{[^}]*overflow-x: hidden;/);
+});
+
+test('日历当天面板：首次从 0 展开，换天平滑改高并整块淡入，同一天只在骨架换成歌曲时淡入列表', async () => {
+  const helperStart = source.indexOf('const MOTION_EASE');
+  const helper = source.slice(helperStart, source.indexOf('// 用 View Transitions', helperStart));
+  const start = source.indexOf('let calDetailResize = null;');
+  const end = source.indexOf('function renderCalendarDetail', start);
+
+  const fades = [];
+  const node = (name, height, extra = {}) => ({
+    name,
+    height,
+    ...extra,
+    animate() {
+      fades.push(name);
+      return { finished: new Promise(() => {}), cancel() {} };
+    },
+  });
+  const resizes = [];
+  const classes = new Set();
+  const px = (value) => Number.parseFloat(value);
+  const panel = {
+    hidden: true,
+    children: [],
+    classList: { add: (name) => classes.add(name), remove: (name) => classes.delete(name) },
+    replaceChildren(...nodes) { this.children = nodes; },
+    querySelector(selector) {
+      if (selector === '.skeleton') return this.children.find((child) => child.skeleton) || null;
+      if (selector === '.cal-detail__songs') return this.children.find((child) => child.songs) || null;
+      return null;
+    },
+    // 过渡还在跑时量到的是过渡中途的高度（这里取起止中点），停掉或播完之后才是内容的自然高度。
+    getBoundingClientRect() {
+      const running = resizes.find((entry) => !entry.cancelled && !entry.done);
+      if (running) return { height: (px(running.keyframes[0].height) + px(running.keyframes[1].height)) / 2 };
+      return { height: this.children.reduce((sum, child) => sum + child.height, 0) };
+    },
+    animate(keyframes) {
+      let resolve;
+      const entry = {
+        keyframes: JSON.parse(JSON.stringify(keyframes)),
+        cancelled: false,
+        done: false,
+        finished: new Promise((settle) => { resolve = settle; }),
+        cancel() { this.cancelled = true; },
+        finish() { this.done = true; resolve(); },
+      };
+      resizes.push(entry);
+      return entry;
+    },
+  };
+  const reducedMotion = { matches: false };
+  const show = vm.runInNewContext(`${helper}; ${source.slice(start, end)}; showCalendarDetail`, {
+    reducedMotion,
+    document: { hidden: false },
+    nodes: { calDetail: panel },
+    getComputedStyle: () => ({ marginTop: '24px' }),
+  });
+
+  // 首次出现：从 0 展开，连上边距一起；所有块淡入。
+  show('2026-10-01', [node('head', 20), node('list', 200, { songs: true, skeleton: true })]);
+  assert.equal(panel.hidden, false);
+  assert.deepEqual(resizes[0].keyframes, [{ height: '0px', marginTop: '0px' }, { height: '220px', marginTop: '24px' }]);
+  assert.ok(classes.has('is-resizing'));
+  assert.deepEqual(fades, ['head', 'list']);
+
+  // 展开播完：撤掉裁剪。同一天骨架换成歌曲、高度不变：不改高，只淡入列表。
+  resizes[0].finish();
+  await new Promise((settle) => setImmediate(settle));
+  assert.ok(!classes.has('is-resizing'));
+  fades.length = 0;
+  show('2026-10-01', [node('head', 20), node('songs', 200, { songs: true })]);
+  assert.equal(resizes.length, 1);
+  assert.deepEqual(fades, ['songs']);
+
+  // 同一天内容不变的重画（切次数/时长）：不淡入、不改高。
+  fades.length = 0;
+  show('2026-10-01', [node('head', 20), node('songs', 200, { songs: true })]);
+  assert.equal(fades.length, 0);
+  assert.equal(resizes.length, 1);
+
+  // 换到一天没播放的：从旧高度过渡到新高度，整块淡入。
+  show('2026-10-02', [node('head', 20), node('text', 30)]);
+  assert.deepEqual(resizes[1].keyframes, [{ height: '220px' }, { height: '50px' }]);
+  assert.deepEqual(fades, ['head', 'text']);
+
+  // 过渡中途又换天：停掉上一段，从中途的高度接着过渡，裁剪保持。
+  show('2026-10-03', [node('head', 20), node('list', 200, { songs: true })]);
+  assert.equal(resizes[1].cancelled, true);
+  assert.deepEqual(resizes[2].keyframes, [{ height: '135px' }, { height: '220px' }]);
+  assert.ok(classes.has('is-resizing'));
+  // 被停掉那段的 finished 晚到也不能撤掉新一段的裁剪。
+  resizes[1].finish();
+  await new Promise((settle) => setImmediate(settle));
+  assert.ok(classes.has('is-resizing'));
+
+  // 减少动效：照常换内容，不播任何动画；进行中的过渡被停掉、裁剪撤掉。
+  fades.length = 0;
+  reducedMotion.matches = true;
+  show('2026-10-04', [node('head', 20), node('text', 30)]);
+  assert.equal(resizes[2].cancelled, true);
+  assert.equal(resizes.length, 3);
+  assert.ok(!classes.has('is-resizing'));
+  assert.equal(fades.length, 0);
+  assert.equal(panel.children.length, 2);
+});

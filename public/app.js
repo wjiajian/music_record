@@ -205,7 +205,14 @@ function syncSwitchIndicators() {
   document.querySelectorAll('.segmented, .tabs').forEach(syncSwitchIndicator);
 }
 
-// 用 View Transitions 把一次 DOM 替换变成动画：swap 只动被命名的区块（排行行、趋势图、日历），theme 整页从右下往左上擦过。
+// 一次性的进场动画（Web Animations）：减少动效、页面在后台或不支持时不播，返回 null。
+const MOTION_EASE = 'cubic-bezier(0.22, 1, 0.36, 1)';
+function playMotion(node, keyframes, options) {
+  if (reducedMotion.matches || document.hidden || !node?.animate) return null;
+  return node.animate(keyframes, { easing: MOTION_EASE, ...options });
+}
+
+// 用 View Transitions 把一次 DOM 替换变成动画：swap 只动被命名的区块（排行行、日历），theme 整页从右下往左上擦过。
 // 不支持、减少动效或页面在后台时直接替换。
 function withViewTransition(update, kind = 'swap') {
   if (!document.startViewTransition || reducedMotion.matches || document.hidden) {
@@ -241,9 +248,7 @@ function setMetricValue(node, text) {
   digitNode.textContent = digits;
   node.replaceChildren(prefixNode, digitNode);
   node.dataset.raw = raw;
-  if (previous && previous !== raw && !reducedMotion.matches && digitNode.animate) {
-    digitNode.animate([{ opacity: 0 }, { opacity: 1 }], { duration: 300, easing: 'cubic-bezier(0.22, 1, 0.36, 1)' });
-  }
+  if (previous && previous !== raw) playMotion(digitNode, [{ opacity: 0 }, { opacity: 1 }], { duration: 300 });
 }
 
 function emptyState(title, text, { kind = 'empty', tag = 'div' } = {}) {
@@ -686,7 +691,8 @@ function splitTrendSegments(points) {
   return segments;
 }
 
-function renderTrend(payload, health) {
+// animate：折线从左往右描出、面积随后淡入（区块还没滚进视口时等到进场再画）；宽度变化重画时不描。
+function renderTrend(payload, health, { animate = false } = {}) {
   lastTrend = { payload, health };
   nodes.trendChart.replaceChildren();
   setDetail('trendDetail', '');
@@ -749,27 +755,32 @@ function renderTrend(payload, health) {
     svg.append(makeSvgElement('rect', { x: gapStart, y: top, width: gapEnd - gapStart, height: baseline - top, class: 'trend-gap' }));
   }
 
+  // 面积与折线分组：描线时折线、圆点一起从左往右擦出，面积整组淡入；网格、空缺带和坐标不动。
+  const areas = makeSvgElement('g', { class: 'trend-areas' });
+  const plot = makeSvgElement('g', { class: 'trend-plot' });
+  svg.append(areas, plot);
+
   for (const segment of splitTrendSegments(points)) {
     // 每段只画一块面积，进行中的桶不填充。
     const settled = segment.filter((point) => !point.is_current);
     if (settled.length > 1) {
       const outline = settled.map((point) => `L ${point.x} ${point.y}`).join(' ');
       const area = `M ${settled[0].x} ${baseline} ${outline} L ${settled.at(-1).x} ${baseline} Z`;
-      svg.append(makeSvgElement('path', { d: area, class: 'trend-area' }));
+      areas.append(makeSvgElement('path', { d: area, class: 'trend-area' }));
     }
     for (let index = 1; index < segment.length; index += 1) {
       const previous = segment[index - 1];
       const point = segment[index];
       const inProgress = previous.is_current || point.is_current;
       const line = `M ${previous.x} ${previous.y} L ${point.x} ${point.y}`;
-      svg.append(makeSvgElement('path', { d: line, class: `trend-line${inProgress ? ' is-current' : ''}` }));
+      plot.append(makeSvgElement('path', { d: line, class: `trend-line${inProgress ? ' is-current' : ''}` }));
     }
   }
 
   const labelStride = Math.max(1, Math.ceil(series.length / (compact ? 4 : 7)));
   points.forEach((point, index) => {
     if (point.is_current) {
-      svg.append(makeSvgElement('line', { x1: point.x, y1: top, x2: point.x, y2: baseline, class: 'trend-current-line' }));
+      plot.append(makeSvgElement('line', { x1: point.x, y1: top, x2: point.x, y2: baseline, class: 'trend-current-line' }));
     }
     if (!point.missing) {
       const circle = makeSvgElement('circle', {
@@ -786,7 +797,7 @@ function renderTrend(payload, health) {
       const tooltip = makeSvgElement('title');
       tooltip.textContent = circle.dataset.detail;
       circle.append(tooltip);
-      svg.append(circle);
+      plot.append(circle);
     }
     if (index % labelStride === 0 || index === points.length - 1) {
       const label = makeSvgElement('text', { x: point.x, y: baseline + 26, 'text-anchor': 'middle', class: 'trend-axis-label' });
@@ -794,6 +805,7 @@ function renderTrend(payload, health) {
       svg.append(label);
     }
   });
+  figure.classList.toggle('is-drawing', animate);
   figure.append(svg);
 
   const caption = document.createElement('figcaption');
@@ -845,6 +857,8 @@ function renderHourlyActivity(payload) {
     cell.type = 'button';
     const intensity = (bucket.plays || 0) / max;
     cell.style.setProperty('--intensity', intensity.toFixed(3));
+    // 柱子按小时依次长出来。
+    cell.style.setProperty('--i', String(bucket.hour));
     cell.dataset.level = String(bucket.plays ? Math.max(1, Math.ceil(intensity * 5)) : 0);
     // 接近峰值的时段用强调色，其余保持中性。
     if (bucket.plays && intensity >= 0.8) {
@@ -1304,8 +1318,47 @@ async function loadCalendar({ animate = false } = {}) {
   else update();
 }
 
+// 当天面板：第一次出现时从 0 展开；换天或骨架换成歌曲后高度变了，就从旧高度过渡到新高度。
+// 换了一天整块淡入；同一天只在骨架换成歌曲时淡入列表，切次数/时长这类内容不变的重画不闪。
+let calDetailResize = null;
+let calDetailDate = null;
+
+function showCalendarDetail(date, parts) {
+  const panel = nodes.calDetail;
+  const wasHidden = panel.hidden;
+  const sameDay = !wasHidden && calDetailDate === date;
+  const wasLoading = sameDay && Boolean(panel.querySelector('.skeleton'));
+  // 先量旧高度（上一段过渡还在跑时量到的是过渡中的高度），再停掉它，否则量不到新内容的自然高度。
+  const from = wasHidden ? 0 : panel.getBoundingClientRect().height;
+  if (calDetailResize) {
+    calDetailResize.cancel();
+    calDetailResize = null;
+    panel.classList.remove('is-resizing');
+  }
+  panel.hidden = false;
+  panel.replaceChildren(...parts);
+  calDetailDate = date;
+
+  const fresh = !sameDay ? [...panel.children] : wasLoading ? [panel.querySelector('.cal-detail__songs')] : [];
+  for (const node of fresh) playMotion(node, [{ opacity: 0 }, { opacity: 1 }], { duration: 300 });
+
+  const to = panel.getBoundingClientRect().height;
+  if (Math.abs(to - from) < 1) return;
+  const margin = getComputedStyle(panel).marginTop;
+  const resize = playMotion(panel, wasHidden
+    ? [{ height: '0px', marginTop: '0px' }, { height: `${to}px`, marginTop: margin }]
+    : [{ height: `${from}px` }, { height: `${to}px` }], { duration: 500 });
+  if (!resize) return;
+  calDetailResize = resize;
+  panel.classList.add('is-resizing');
+  resize.finished.catch(() => {}).finally(() => {
+    if (calDetailResize !== resize) return;
+    calDetailResize = null;
+    panel.classList.remove('is-resizing');
+  });
+}
+
 function renderCalendarDetail(day, tops) {
-  nodes.calDetail.hidden = false;
   const head = document.createElement('div');
   head.className = 'cal-detail__head';
   const title = document.createElement('h3');
@@ -1322,12 +1375,12 @@ function renderCalendarDetail(day, tops) {
   const count = `${day.lower_bound ? '至少 ' : ''}${formatNumber(day.plays)} 次`;
   if (day.state === 'gap') {
     meta.textContent = '数据未知';
-    nodes.calDetail.replaceChildren(head, text('这天的播放没有完整记下，无法知道听了多少。'));
+    showCalendarDetail(day.date, [head, text('这天的播放没有完整记下，无法知道听了多少。')]);
     return;
   }
   if (day.state === 'zero') {
     meta.textContent = '0 次';
-    nodes.calDetail.replaceChildren(head, text('这天没有播放。'));
+    showCalendarDetail(day.date, [head, text('这天没有播放。')]);
     return;
   }
 
@@ -1375,7 +1428,7 @@ function renderCalendarDetail(day, tops) {
   list.style.setProperty('--rows', String(Math.max(Math.ceil(rows.length / 2), 1)));
   list.append(...rows);
   parts.push(list);
-  nodes.calDetail.replaceChildren(...parts);
+  showCalendarDetail(day.date, parts);
 }
 
 async function selectCalendarDay(date) {
@@ -1490,8 +1543,10 @@ function detailDailyChart(trend) {
     if (!point.plays) return;
     const height = Math.max(2, (point.plays / max) * (base - top));
     const variant = point.is_current ? ' is-today' : point.estimated ? ' is-uncertain' : '';
+    // --at：柱子在时间轴上的位置（0–1），从左到右依次长出来。
     svg.append(makeSvgElement('rect', {
       x: index * slot + (slot - barWidth) / 2, y: base - height, width: barWidth, height, class: `dc-bar${variant}`,
+      style: `--at: ${(index / series.length).toFixed(3)}`,
     }));
   });
   const endLabel = series.at(-1).is_current ? '今天' : monthDayLabel(series.at(-1).start);
@@ -1563,6 +1618,7 @@ function detailHourlyChart(hourly) {
     const variant = bucket.plays ? (peaks.includes(bucket.hour) ? ' is-peak' : '') : ' is-empty';
     const bar = makeSvgElement('rect', {
       x: bucket.hour * slot + slot * 0.15, y: base - height, width: slot * 0.7, height, rx: 1, class: `dh-bar${variant}`,
+      style: `--at: ${(bucket.hour / 24).toFixed(3)}`,
     });
     const tooltip = makeSvgElement('title');
     tooltip.textContent = `${String(bucket.hour).padStart(2, '0')} 时：${formatNumber(bucket.plays)} 次`;
@@ -1826,6 +1882,14 @@ async function openDetail(dimension, id, { remember = true } = {}) {
   renderDetailSkeleton();
   if (!navigating) nodes.drawer.showModal();
   nodes.drawer.scrollTop = 0;
+  // 抽屉里点到别的歌手/专辑时新内容从右边推进来，「返回」时从左边推回来，看得出往哪走。
+  // 动的是 drawerBody 本身，骨架中途换成内容也接着滑完。
+  if (navigating) {
+    playMotion(nodes.drawerBody, [
+      { opacity: 0, transform: `translateX(${remember ? 32 : -32}px)` },
+      { opacity: 1, transform: 'none' },
+    ], { duration: 500 });
+  }
   const [detail, trend] = await Promise.all([
     getJson(`/api/detail/${dimension}/${encodeURIComponent(id)}`, { period: windowKey }).catch((error) => ({ error: error.message })),
     getJson('/api/trend', { granularity: 'day', last: DETAIL_CHART_DAYS, [`${dimension}_id`]: id }).catch((error) => ({ error: error.message })),
@@ -1833,6 +1897,8 @@ async function openDetail(dimension, id, { remember = true } = {}) {
   if (requestId !== detailRequestId) return;
   renderDetail(detail, trend, windowKey);
   nodes.drawerBody.removeAttribute('aria-busy');
+  // 骨架换成内容时各段淡入，不硬切；淡的是子元素，不和上面 drawerBody 的推入抢同一个属性。
+  for (const section of nodes.drawerBody.children) playMotion(section, [{ opacity: 0 }, { opacity: 1 }], { duration: 300 });
   // 抽屉内换内容时，原先聚焦的按钮已被移除；把焦点交给新标题，读屏会念出换到了谁。
   if (navigating) {
     const title = document.getElementById('drawerTitle');
@@ -1879,7 +1945,7 @@ async function loadRanking() {
   });
 }
 
-// 趋势查询固定的 30 日 / 12 周 / 12 月序列，只影响趋势图本身。
+// 趋势查询固定的 30 日 / 12 周 / 12 月序列，只影响趋势图本身；换周期时折线重新描出，不再整块淡入淡出。
 async function loadTrend() {
   setActiveButtons();
   const requestId = ++trendRequestId;
@@ -1888,11 +1954,9 @@ async function loadTrend() {
     granularity: state.granularity,
     last: state.granularity === 'day' ? 30 : 12,
   }).catch((error) => ({ error: error.message }));
-  withViewTransition(() => {
-    if (requestId !== trendRequestId) return;
-    renderTrend(trend, latestHealth);
-    nodes.trendChart.removeAttribute('aria-busy');
-  });
+  if (requestId !== trendRequestId) return;
+  renderTrend(trend, latestHealth, { animate: true });
+  nodes.trendChart.removeAttribute('aria-busy');
 }
 
 async function loadDashboard() {
@@ -1923,7 +1987,7 @@ async function loadDashboard() {
     ]);
     if (dashboardOverviewRequest === overviewRequestId) renderOverview(overview, health);
     if (dashboardRankingRequest === rankingRequestId) renderRanking(ranking, health);
-    if (dashboardTrendRequest === trendRequestId) renderTrend(trend, health);
+    if (dashboardTrendRequest === trendRequestId) renderTrend(trend, health, { animate: true });
     renderMosaic(dailyTops);
     renderHourlyActivity(hourly);
     renderRecent(await recentPromise);
