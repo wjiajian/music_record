@@ -43,6 +43,7 @@ app.get('/api', async () => ({
     '/api/hourly-activity',
     '/api/cover',
     '/api/daily-top-songs',
+    '/api/detail/:dimension/:id',
     '/api/calendar',
     '/api/weekday',
     '/api/netease/record/recent/song',

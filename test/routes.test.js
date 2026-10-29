@@ -195,6 +195,92 @@ test('hourly-activity 固定返回 24 桶，只按本地小时统计真实事件
   db.close();
 });
 
+test('detail 汇总歌曲/歌手/专辑的窗口与全部记录，名次与排行列表同序', async () => {
+  const db = freshDb();
+  seed(db);
+  db.prepare('INSERT INTO artist(id,name) VALUES(2,?)').run('other');
+  db.prepare('INSERT INTO song(id,name,duration_ms,album_id) VALUES(2,?,?,1)').run('song2', 240000);
+  db.prepare('INSERT INTO song_artist(song_id,artist_id,position) VALUES(2,2,0)').run();
+  // 与歌曲 1 同为 5 次：并列时按 id 排在后面。
+  db.prepare(
+    "INSERT INTO daily_play(play_date,song_id,plays,span_days,is_estimated,source) VALUES('2020-07-20',2,5,1,0,'recent')"
+  ).run();
+  db.prepare('INSERT INTO playlist(id,name,track_count,list_position) VALUES(9,?,2,0)').run('深夜循环');
+  // 同一歌单里出现两次，只列一次。
+  db.prepare('INSERT INTO playlist_track(playlist_id,song_id,position) VALUES(9,1,0),(9,1,1)').run();
+
+  const insertEvent = db.prepare(
+    `INSERT INTO recent_play_event(song_id,play_time,play_date,source_type,first_seen_at,last_seen_at)
+     VALUES(?,?,?,?,?,?)`
+  );
+  const lastNight = DateTime.now().setZone('Asia/Shanghai').minus({ days: 1 }).set({ hour: 23, minute: 10 });
+  insertEvent.run(1, lastNight.toMillis(), lastNight.toISODate(), 'SONG', 'x', 'x');
+  insertEvent.run(2, lastNight.minus({ hours: 2 }).toMillis(), lastNight.toISODate(), 'SONG', 'x', 'x');
+  // 同一次播放以两种来源类型落库，最近几次里按时间去重。
+  const old = Date.parse('2020-07-20T04:00:00Z');
+  insertEvent.run(1, old, '2020-07-20', 'SONG', 'x', 'x');
+  insertEvent.run(1, old, '2020-07-20', 'PLAYLIST', 'x', 'x');
+
+  const app = await appWithDb(db);
+  try {
+    const ranking = (await app.inject('/api/ranking?period=week&date=2020-07-20')).json();
+    assert.deepEqual(ranking.items.map((item) => item.id), [1, 2]);
+
+    const song = (await app.inject('/api/detail/song/1?period=week&date=2020-07-20')).json();
+    assert.equal(song.entity.name, 'song');
+    assert.deepEqual(song.entity.artists, [{ id: 1, name: 'artist' }]);
+    assert.equal(song.entity.album.picUrl, 'https://example.test/cover.jpg');
+    assert.deepEqual(song.meta.period_resolved, { period: 'week', start: '2020-07-14', end: '2020-07-20', label: '2020-07-14..2020-07-20' });
+    assert.equal(song.window.plays, 5);
+    assert.equal(song.window.rank, 1);
+    assert.equal(song.window.ranked, 2);
+    assert.equal(song.all.plays, 5);
+    assert.equal(song.all.est_minutes, 15);
+    assert.equal(song.all.first_date, '2020-07-14');
+    assert.equal(song.meta.data_first_date, '2020-07-07');
+    assert.deepEqual(song.recent_plays, [lastNight.toMillis(), old]);
+    assert.deepEqual(song.playlists, [{ id: 9, name: '深夜循环', trackCount: 2 }]);
+    assert.equal(song.hourly.buckets.length, 24);
+    assert.equal(song.hourly.located_plays, 1);
+    assert.equal(song.hourly.buckets[23].plays, 1);
+    assert.equal(song.hourly.buckets[21].plays, 0);
+    assert.deepEqual(song.top_songs, []);
+
+    const second = (await app.inject('/api/detail/song/2?period=week&date=2020-07-20')).json();
+    assert.equal(second.window.rank, 2);
+
+    const artist = (await app.inject('/api/detail/artist/1?period=week&date=2020-07-20')).json();
+    assert.equal(artist.entity.name, 'artist');
+    assert.equal(artist.window.plays, 5);
+    assert.deepEqual(artist.top_songs.map((item) => item.id), [1]);
+    assert.deepEqual(artist.recent_plays, []);
+    assert.deepEqual(artist.playlists, []);
+
+    const album = (await app.inject('/api/detail/album/1?period=week&date=2020-07-20')).json();
+    assert.deepEqual(album.entity.artists.map((item) => item.name), ['artist', 'other']);
+    assert.equal(album.window.plays, 10);
+    assert.deepEqual(album.top_songs.map((item) => item.id), [1, 2]);
+    assert.equal(album.hourly.located_plays, 2);
+
+    for (const [url, status, error] of [
+      ['/api/detail/playlist/1', 400, 'bad_detail_target'],
+      ['/api/detail/song/abc', 400, 'bad_detail_target'],
+      ['/api/detail/song/1?period=decade', 400, 'bad_period'],
+      ['/api/detail/song/999', 404, 'detail_not_found'],
+    ]) {
+      const response = await app.inject(url);
+      assert.equal(response.statusCode, status, url);
+      assert.equal(response.json().error, error, url);
+    }
+
+    const health = (await app.inject('/api/health')).json();
+    assert.equal(health.first_date, '2020-07-07');
+  } finally {
+    await app.close();
+    db.close();
+  }
+});
+
 test('cover 端点拒绝代理非网易云图片域名', async () => {
   const db = freshDb();
   const app = await appWithDb(db);

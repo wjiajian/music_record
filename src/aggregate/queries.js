@@ -38,7 +38,7 @@ export function rankingSongs(db, start, end, metric, limit, offset) {
        FROM daily_play dp JOIN song s ON s.id = dp.song_id
        WHERE dp.play_date BETWEEN ? AND ?
        GROUP BY dp.song_id
-       ORDER BY ${orderCol(metric)} DESC, plays DESC
+       ORDER BY ${orderCol(metric)} DESC, plays DESC, id
        LIMIT ? OFFSET ?`
     )
     .all(start, end, limit, offset);
@@ -143,7 +143,7 @@ export function rankingArtists(db, start, end, metric, limit, offset) {
        JOIN artist ar ON ar.id = sa.artist_id
        WHERE dp.play_date BETWEEN ? AND ?
        GROUP BY ar.id
-       ORDER BY ${orderCol(metric)} DESC, plays DESC
+       ORDER BY ${orderCol(metric)} DESC, plays DESC, id
        LIMIT ? OFFSET ?`
     )
     .all(start, end, limit, offset);
@@ -167,7 +167,7 @@ export function rankingAlbums(db, start, end, metric, limit, offset) {
        JOIN album al ON al.id = s.album_id
        WHERE dp.play_date BETWEEN ? AND ?
        GROUP BY al.id
-       ORDER BY ${orderCol(metric)} DESC, plays DESC
+       ORDER BY ${orderCol(metric)} DESC, plays DESC, id
        LIMIT ? OFFSET ?`
     )
     .all(start, end, limit, offset);
@@ -300,15 +300,138 @@ export function dailyTopSongs(db, start, end, limitPerDay = 24) {
 
 // ---- 小时活跃度（只读取真实捕获的最近播放事件）---------------------
 
-export function recentPlayEventsInRange(db, start, end) {
+export function recentPlayEventsInRange(db, start, end, opts = {}) {
+  const { songId, artistId, albumId } = opts;
+  let join = '';
+  const where = ['e.play_date BETWEEN ? AND ?'];
+  const params = [start, end];
+  if (songId != null) {
+    where.push('e.song_id = ?');
+    params.push(songId);
+  }
+  if (albumId != null) {
+    join += ' JOIN song s ON s.id = e.song_id';
+    where.push('s.album_id = ?');
+    params.push(albumId);
+  }
+  if (artistId != null) {
+    join += ' JOIN song_artist sa ON sa.song_id = e.song_id';
+    where.push('sa.artist_id = ?');
+    params.push(artistId);
+  }
   return db
     .prepare(
-      `SELECT song_id, play_time, play_date
-       FROM recent_play_event
-       WHERE play_date BETWEEN ? AND ?
-       ORDER BY play_time`
+      `SELECT e.song_id, e.play_time, e.play_date
+       FROM recent_play_event e${join}
+       WHERE ${where.join(' AND ')}
+       ORDER BY e.play_time`
     )
-    .all(start, end);
+    .all(...params);
+}
+
+// ---- 详情抽屉（歌曲 / 歌手 / 专辑）--------------------------------
+// key/join 只来自这张白名单表，维度由路由校验后才进来。
+
+const DETAIL_SCOPE = {
+  song: { join: '', key: 'dp.song_id' },
+  artist: { join: 'JOIN song_artist sa ON sa.song_id = dp.song_id', key: 'sa.artist_id' },
+  album: { join: 'JOIN album al ON al.id = s.album_id', key: 'al.id' },
+};
+
+export function entityInfo(db, dimension, id) {
+  if (dimension === 'song') {
+    const row = db.prepare('SELECT id, name, duration_ms FROM song WHERE id = ?').get(id);
+    if (!row) return null;
+    const [song] = songDetails(db, [row], 0);
+    return { id: song.id, name: song.name, duration_ms: row.duration_ms, artists: song.artists, album: song.album };
+  }
+  if (dimension === 'artist') {
+    return db.prepare('SELECT id, name FROM artist WHERE id = ?').get(id) || null;
+  }
+  const album = db.prepare('SELECT id, name, pic_url AS picUrl FROM album WHERE id = ?').get(id);
+  if (!album) return null;
+  // 专辑本身不存歌手，取其歌曲的第一署名歌手。
+  const artists = db
+    .prepare(
+      `SELECT DISTINCT a.id, a.name
+       FROM song s JOIN song_artist sa ON sa.song_id = s.id AND sa.position = 0
+       JOIN artist a ON a.id = sa.artist_id
+       WHERE s.album_id = ? ORDER BY a.id LIMIT 3`
+    )
+    .all(id);
+  return { ...album, artists };
+}
+
+export function entityTotals(db, dimension, id, start, end) {
+  const { join, key } = DETAIL_SCOPE[dimension];
+  return db
+    .prepare(
+      `SELECT COALESCE(SUM(dp.plays),0) AS plays,
+              COALESCE(SUM(dp.plays * COALESCE(s.duration_ms,0)),0) AS est_ms,
+              MIN(dp.play_date) AS first_date,
+              MAX(dp.play_date) AS last_date,
+              COUNT(DISTINCT dp.play_date) AS days
+       FROM daily_play dp JOIN song s ON s.id = dp.song_id ${join}
+       WHERE ${key} = ? AND dp.play_date BETWEEN ? AND ?`
+    )
+    .get(id, start, end);
+}
+
+// 名次与排行列表同序（次数降序，同次数按 id 升序），抽屉里的「排第 N」才能和列表对上。
+export function entityRank(db, dimension, id, start, end) {
+  const { join, key } = DETAIL_SCOPE[dimension];
+  return (
+    db
+      .prepare(
+        `WITH t AS (
+           SELECT ${key} AS id, SUM(dp.plays) AS plays
+           FROM daily_play dp JOIN song s ON s.id = dp.song_id ${join}
+           WHERE dp.play_date BETWEEN ? AND ? AND ${key} IS NOT NULL
+           GROUP BY ${key}
+         )
+         SELECT (SELECT COUNT(*) FROM t o
+                 WHERE o.plays > me.plays OR (o.plays = me.plays AND o.id < me.id)) + 1 AS rank,
+                (SELECT COUNT(*) FROM t) AS total
+         FROM t me WHERE me.id = ?`
+      )
+      .get(start, end, id) || null
+  );
+}
+
+export function entityTopSongs(db, dimension, id, start, end, limit = 5) {
+  const { join, key } = DETAIL_SCOPE[dimension];
+  const rows = db
+    .prepare(
+      `SELECT dp.song_id AS id, s.name AS name,
+              SUM(dp.plays) AS plays,
+              SUM(dp.plays * COALESCE(s.duration_ms,0)) AS est_ms
+       FROM daily_play dp JOIN song s ON s.id = dp.song_id ${join}
+       WHERE ${key} = ? AND dp.play_date BETWEEN ? AND ?
+       GROUP BY dp.song_id
+       ORDER BY plays DESC, id
+       LIMIT ?`
+    )
+    .all(id, start, end, limit);
+  return songDetails(db, rows, 0);
+}
+
+// 同一次播放可能因来源类型不同存成多行，按时间去重。
+export function songRecentPlayTimes(db, songId, limit = 5) {
+  return db
+    .prepare('SELECT DISTINCT play_time FROM recent_play_event WHERE song_id = ? ORDER BY play_time DESC LIMIT ?')
+    .all(songId, limit)
+    .map((row) => row.play_time);
+}
+
+export function playlistsWithSong(db, songId) {
+  return db
+    .prepare(
+      `SELECT id, name, track_count AS trackCount
+       FROM playlist
+       WHERE id IN (SELECT playlist_id FROM playlist_track WHERE song_id = ?)
+       ORDER BY list_position, id`
+    )
+    .all(songId);
 }
 
 // ---- 概览 / 健康 ---------------------------------------------------

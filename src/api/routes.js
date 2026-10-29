@@ -1,7 +1,7 @@
-// Fastify 六端点。所有聚合端点回 meta.period_resolved；用 missing/has_gap/estimated
+// Fastify 只读端点。聚合端点回 meta.period_resolved 或 range；用 missing/has_gap/estimated
 // 区分「真 0」与「缺数据」；数据不足时回 200 + { insufficientData:true }。
 import { DateTime } from 'luxon';
-import { resolvePeriod, buckets, gapDates, isoWeekday, nowLocalDate } from '../aggregate/periods.js';
+import { resolvePeriod, buckets, gapDates, isoWeekday, isoMinusDays, nowLocalDate, previousDay } from '../aggregate/periods.js';
 import * as Q from '../aggregate/queries.js';
 import { config } from '../config.js';
 import {
@@ -12,6 +12,10 @@ import {
 import { CoverCacheError, coverBrowserCacheControl, getCachedCover } from './coverCache.js';
 
 const WEEKDAY_LABEL = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+const DETAIL_DIMENSIONS = new Set(['song', 'artist', 'album']);
+const DETAIL_HOURLY_DAYS = 30;
+const DETAIL_RECENT_PLAYS = 5;
+const DETAIL_TOP_SONGS = 10; // 与首页排行同为 10 条
 
 function insufficient(db, needDays, extra = {}) {
   return { insufficientData: true, haveDays: Q.distinctPlayDates(db), needDays, ...extra };
@@ -70,6 +74,39 @@ function dataQuality(db, start, end) {
   };
 }
 
+// 按本地小时汇总真实播放事件；账本里无法定位到小时的日级补量只披露、不推断。
+function hourlyActivity(db, start, end, filter = {}) {
+  const hourBuckets = Array.from({ length: 24 }, (_, hour) => ({
+    hour,
+    plays: 0,
+    songIds: new Set(),
+  }));
+  const locatedByDate = new Map();
+  for (const event of Q.recentPlayEventsInRange(db, start, end, filter)) {
+    const timestamp = Number(event.play_time);
+    if (!Number.isFinite(timestamp) || timestamp <= 0) continue;
+    const millis = timestamp < 10_000_000_000 ? timestamp * 1000 : timestamp;
+    const local = DateTime.fromMillis(millis, { zone: config.tz });
+    if (!local.isValid) continue;
+    const localDate = local.toISODate();
+    // play_date 是索引与初筛依据；再按时间戳复核，避免旧数据时区迁移误差。
+    if (localDate < start || localDate > end) continue;
+    hourBuckets[local.hour].plays += 1;
+    hourBuckets[local.hour].songIds.add(event.song_id);
+    locatedByDate.set(localDate, (locatedByDate.get(localDate) || 0) + 1);
+  }
+
+  const locatedPlays = hourBuckets.reduce((sum, bucket) => sum + bucket.plays, 0);
+  // 按天求差，避免某天额外捕获的事件抵消另一天无法定位到小时的账本补量。
+  const daily = Q.dailyTotals(db, start, end, filter);
+  const ledgerPlays = daily.reduce((sum, day) => sum + (day.plays || 0), 0);
+  const unlocatedPlays = daily.reduce(
+    (sum, day) => sum + Math.max(0, (day.plays || 0) - (locatedByDate.get(day.date) || 0)),
+    0
+  );
+  return { hourBuckets, locatedPlays, ledgerPlays, unlocatedPlays };
+}
+
 export default async function routes(fastify) {
   const db = fastify.db;
 
@@ -99,7 +136,7 @@ export default async function routes(fastify) {
 
   // ---- 采集健康（驱动「攒取中」）----
   fastify.get('/api/health', async () => {
-    const { dates, playRange } = dataWindow(db);
+    const { dates, first, playRange } = dataWindow(db);
     const haveDays = Q.distinctPlayDates(db);
     const latest = Q.latestSnapshot(db);
     const latestToday = Q.latestTodayListenSnapshot(db);
@@ -111,6 +148,7 @@ export default async function routes(fastify) {
     const lastSuccessMs = counter.last_success_at ? Date.parse(counter.last_success_at) : NaN;
     const counterStale = !Number.isFinite(lastSuccessMs) || Date.now() - lastSuccessMs > config.realtime.intervalMs * 3;
     return {
+      first_date: first,
       last_snapshot: latest?.snapshot_date ?? null,
       last_fetch_status: latest?.status ?? null,
       last_play_date: playRange.last ?? null,
@@ -293,34 +331,7 @@ export default async function routes(fastify) {
       return reply.code(400).send({ error: 'invalid_hourly_activity_range' });
     }
 
-    const hourBuckets = Array.from({ length: 24 }, (_, hour) => ({
-      hour,
-      plays: 0,
-      songIds: new Set(),
-    }));
-    const locatedByDate = new Map();
-    for (const event of Q.recentPlayEventsInRange(db, start, end)) {
-      const timestamp = Number(event.play_time);
-      if (!Number.isFinite(timestamp) || timestamp <= 0) continue;
-      const millis = timestamp < 10_000_000_000 ? timestamp * 1000 : timestamp;
-      const local = DateTime.fromMillis(millis, { zone: config.tz });
-      if (!local.isValid) continue;
-      const localDate = local.toISODate();
-      // play_date 是索引与初筛依据；再按时间戳复核，避免旧数据时区迁移误差。
-      if (localDate < start || localDate > end) continue;
-      hourBuckets[local.hour].plays += 1;
-      hourBuckets[local.hour].songIds.add(event.song_id);
-      locatedByDate.set(localDate, (locatedByDate.get(localDate) || 0) + 1);
-    }
-
-    const locatedPlays = hourBuckets.reduce((sum, bucket) => sum + bucket.plays, 0);
-    // 按天求差，避免某天额外捕获的事件抵消另一天无法定位到小时的账本补量。
-    const daily = Q.dailyTotals(db, start, end);
-    const ledgerPlays = daily.reduce((sum, day) => sum + (day.plays || 0), 0);
-    const unlocatedPlays = daily.reduce(
-      (sum, day) => sum + Math.max(0, (day.plays || 0) - (locatedByDate.get(day.date) || 0)),
-      0
-    );
+    const { hourBuckets, locatedPlays, ledgerPlays, unlocatedPlays } = hourlyActivity(db, start, end);
     const quality = dataQuality(db, start, end);
     const collectionGaps = Q.counterPollGaps(db).filter((gap) => {
       const gapStart = localDateFromISO(gap.started_at);
@@ -406,6 +417,72 @@ export default async function routes(fastify) {
         freshness: freshness(db),
       },
       items,
+    };
+  });
+
+  // ---- 详情抽屉：一首歌 / 一位歌手 / 一张专辑在统计窗口与全部记录里的情况 ----
+  // 逐日曲线不在这里重复计算，前端用 /api/trend?{dimension}_id= 取，口径与趋势图一致。
+  fastify.get('/api/detail/:dimension/:id', async (req, reply) => {
+    const { dimension } = req.params;
+    const id = Number(req.params.id);
+    if (!DETAIL_DIMENSIONS.has(dimension) || !Number.isInteger(id) || id <= 0) {
+      return reply.code(400).send({ error: 'bad_detail_target' });
+    }
+    const entity = Q.entityInfo(db, dimension, id);
+    if (!entity) return reply.code(404).send({ error: 'detail_not_found' });
+
+    const { first } = dataWindow(db);
+    const today = nowLocalDate();
+    const anchor = req.query.date || today;
+    let pr;
+    try {
+      pr = resolvePeriod(req.query.period || 'month', anchor, { firstDate: first || anchor, lastDate: anchor });
+    } catch {
+      return reply.code(400).send({ error: 'bad_period' });
+    }
+    const allStart = first || today;
+    const windowTotals = Q.entityTotals(db, dimension, id, pr.start, pr.end);
+    const allTotals = Q.entityTotals(db, dimension, id, allStart, today);
+    const rank = windowTotals.plays ? Q.entityRank(db, dimension, id, pr.start, pr.end) : null;
+
+    // 与首页「一天里什么时候听」同口径：最近 30 个完整自然日，不含今天。
+    const hourlyEnd = previousDay(today);
+    const hourlyStart = isoMinusDays(hourlyEnd, DETAIL_HOURLY_DAYS - 1);
+    const hourly = hourlyActivity(db, hourlyStart, hourlyEnd, { [`${dimension}Id`]: id });
+
+    return {
+      meta: {
+        dimension,
+        id,
+        period_resolved: pr,
+        data_first_date: first,
+        data_quality: dataQuality(db, pr.start, pr.end),
+        all_data_quality: dataQuality(db, allStart, today),
+      },
+      entity,
+      window: {
+        plays: windowTotals.plays,
+        est_minutes: Math.round(windowTotals.est_ms / 60000),
+        days: windowTotals.days,
+        rank: rank?.rank ?? null,
+        ranked: rank?.total ?? 0,
+      },
+      all: {
+        plays: allTotals.plays,
+        est_minutes: Math.round(allTotals.est_ms / 60000),
+        days: allTotals.days,
+        first_date: allTotals.first_date,
+        last_date: allTotals.last_date,
+      },
+      hourly: {
+        range: { start: hourlyStart, end: hourlyEnd },
+        located_plays: hourly.locatedPlays,
+        unlocated_plays: hourly.unlocatedPlays,
+        buckets: hourly.hourBuckets.map((bucket) => ({ hour: bucket.hour, plays: bucket.plays })),
+      },
+      recent_plays: dimension === 'song' ? Q.songRecentPlayTimes(db, id, DETAIL_RECENT_PLAYS) : [],
+      top_songs: dimension === 'song' ? [] : Q.entityTopSongs(db, dimension, id, pr.start, pr.end, DETAIL_TOP_SONGS),
+      playlists: dimension === 'song' ? Q.playlistsWithSong(db, id) : [],
     };
   });
 

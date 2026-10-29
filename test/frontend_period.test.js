@@ -228,6 +228,38 @@ test('品牌名统一为音乐记录，页面不再放概括句', () => {
   assert.doesNotMatch(`${html}\n${source}`, /声波时间账本|music record|heroSummary|trendSummary|describeTrend/);
 });
 
+test('歌曲、歌手、专辑标题点开详情抽屉，网易云外链收进抽屉顶栏', () => {
+  const start = source.indexOf('function createTitle');
+  const end = source.indexOf('function getInsufficientText', start);
+  const creator = source.slice(start, end);
+  assert.match(creator, /dataset\.entity = type/);
+  assert.doesNotMatch(creator, /music\.163\.com/);
+  assert.match(html, /<dialog class="drawer" id="drawer"/);
+  assert.match(html, /id="drawerExternal"/);
+  assert.match(source, /\/api\/detail\/\$\{dimension\}/);
+  assert.match(source, /event\.target\.closest\('\[data-entity\]'\)/);
+});
+
+test('听歌日历复用趋势逐日序列，区分还没开始记录、数据未知与确认的零播放', () => {
+  const start = source.indexOf('function calendarDays');
+  const end = source.indexOf('function calendarValue', start);
+  const calendarDays = vm.runInNewContext(`${source.slice(start, end)}; calendarDays`);
+  const days = calendarDays([
+    { start: '2026-01-01', plays: 0, missing: true },
+    { start: '2026-01-02', plays: 3, missing: false },
+    { start: '2026-01-03', plays: 0, missing: true },
+    { start: '2026-01-04', plays: 0, missing: false },
+    { start: '2026-01-05', plays: 2, missing: false, estimated: true },
+  ]);
+  assert.deepEqual(JSON.parse(JSON.stringify(days.map((day) => day.state))), ['blank', 'played', 'gap', 'zero', 'estimated']);
+
+  const loaderStart = source.indexOf('async function loadCalendar');
+  const loader = source.slice(loaderStart, source.indexOf('function renderCalendarDetail', loaderStart));
+  assert.match(loader, /\/api\/trend/);
+  assert.match(loader, /granularity: 'day'/);
+  assert.match(html, /<a href="#calendar">日历<\/a>/);
+});
+
 test('最近播放显示封面，歌单索引与曲目左右排列', () => {
   const start = source.indexOf('function makeTimedRow');
   const end = source.indexOf('function renderRecent', start);
